@@ -30,7 +30,6 @@ elseif(MSVC)
     add_compile_options(/wd4996)  # Deprecated functions
 endif()
 
-
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 
@@ -67,6 +66,51 @@ target_link_libraries(chat_client
         Boost::system
         Threads::Threads
 )
+
+# GTest
+option(BUILD_TESTS "Build tests" ON)
+if(BUILD_TESTS)
+    find_package(GTest REQUIRED)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+    enable_testing()
+
+    # test executables
+    add_executable(protocol_tests
+            tests/protocol_tests.cpp
+    )
+    target_link_libraries(protocol_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
+    add_executable(types_tests
+            tests/types_tests.cpp
+    )
+    target_link_libraries(types_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
+    add_executable(connection_manager_tests
+            tests/connection_manager_tests.cpp
+            src/server/connection_manager.cpp
+    )
+    target_link_libraries(connection_manager_tests
+            PRIVATE
+            chat_common
+            Boost::system
+            Threads::Threads
+            GTest::gtest_main
+    )
+
+    include(GoogleTest)
+    gtest_discover_tests(protocol_tests)
+    gtest_discover_tests(types_tests)
+    gtest_discover_tests(connection_manager_tests)
+endif()
 
 install(TARGETS chat_server chat_client
     RUNTIME DESTINATION bin
