@@ -174,7 +174,7 @@ namespace chat::server
         // store message in history
         {
             std::lock_guard<std::mutex> lock(message_mutex_);
-            const Message msg{
+            Message msg{
                 .username = username,
                 .text = text,
                 .timestamp = std::chrono::system_clock::now()
