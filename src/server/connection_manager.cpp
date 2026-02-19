@@ -14,27 +14,35 @@ namespace chat::server
         return socket_;
     }
 
-    void Connection::send(const std::string& message)
+    void Connection::send_packet(const std::vector<uint8_t>& packet)
     {
         try
         {
-            boost::asio::write(socket_, boost::asio::buffer(message));
+            boost::asio::write(socket_, boost::asio::buffer(packet));
         }
         catch (const std::exception& e)
         {
-            std::cerr << "Error sending message: " << e.what() << std::endl;
+            std::cerr << "Error sending packet: " << e.what() << std::endl;
+            throw;
         }
     }
 
-    std::string Connection::receive_line()
+    std::pair<MessageType, std::vector<uint8_t>> Connection::receive_packet()
     {
         try
         {
-            std::string line;
-            boost::asio::read_until(socket_, buffer_, '\n');
-            std::istream is(&buffer_);
-            std::getline(is, line);
-            return line + "\n";
+            // read header first
+            MsgHeader header;
+            boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
+
+            // read payload
+            std::vector<uint8_t> payload(header.size);
+            if (header.size > 0)
+            {
+                boost::asio::read(socket_, boost::asio::buffer(payload));
+            }
+
+            return {static_cast<MessageType>(header.type), std::move(payload)};
         }
         catch (const std::exception&)
         {
@@ -87,7 +95,7 @@ namespace chat::server
         }
     }
 
-    void ConnectionManager::broadcast(const std::string& message, const std::string& exclude_user)
+    void ConnectionManager::broadcast(const std::vector<uint8_t>& packet, const std::string& exclude_user)
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -95,7 +103,7 @@ namespace chat::server
             if (user_id != exclude_user && conn->is_open())
                 try
                 {
-                    conn->send(message);
+                    conn->send_packet(packet);
                 }
                 catch (const std::exception& e)
                 {
@@ -103,7 +111,7 @@ namespace chat::server
                 }
     }
 
-    bool ConnectionManager::send_to(const std::string& user_id, const std::string& message)
+    bool ConnectionManager::send_to(const std::string& user_id, const std::vector<uint8_t>& packet)
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -111,7 +119,7 @@ namespace chat::server
         if (it != connections_.end() && it->second->is_open())
             try
             {
-                it->second->send(message);
+                it->second->send_packet(packet);
                 return true;
             }
             catch (const std::exception& e)

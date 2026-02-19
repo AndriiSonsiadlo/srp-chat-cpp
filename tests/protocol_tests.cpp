@@ -15,261 +15,301 @@ namespace chat
         void TearDown() override
         {
         }
+
+        MsgHeader extract_header(const std::vector<uint8_t>& packet)
+        {
+            EXPECT_GE(packet.size(), sizeof(MsgHeader));
+            MsgHeader header;
+            std::memcpy(&header, packet.data(), sizeof(MsgHeader));
+            return header;
+        }
+
+        std::vector<uint8_t> extract_payload(const std::vector<uint8_t>& packet)
+        {
+            EXPECT_GE(packet.size(), sizeof(MsgHeader));
+            return std::vector<uint8_t>(packet.begin() + sizeof(MsgHeader), packet.end());
+        }
     };
 
-    TEST_F(ProtocolTest, EncodeConnect)
+    // Test CONNECT encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeConnect)
     {
-        std::string result = Protocol::encode_connect("alice");
-        EXPECT_EQ(result, "CONNECT|username:alice\n");
+        std::string username = "alice";
+
+        auto packet = Protocol::encode_connect(username);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT));
+        EXPECT_GT(header.size, 0);
+
+        auto payload = extract_payload(packet);
+        EXPECT_EQ(payload.size(), header.size);
+
+        std::string decoded = Protocol::decode_connect(payload);
+        EXPECT_EQ(decoded, username);
     }
 
-    TEST_F(ProtocolTest, EncodeConnectWithSpecialChars)
+    TEST_F(ProtocolTest, EncodeDecodeConnectSpecialChars)
     {
-        std::string result = Protocol::encode_connect("alice|bob");
-        EXPECT_EQ(result, "CONNECT|username:alice\\|bob\n");
+        std::string username = "alice|bob:test";
+
+        auto packet  = Protocol::encode_connect(username);
+        auto payload = extract_payload(packet);
+
+        std::string decoded = Protocol::decode_connect(payload);
+        EXPECT_EQ(decoded, username);
     }
 
-    TEST_F(ProtocolTest, EncodeConnectAck)
+    // Test CONNECT_ACK encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeConnectAck)
     {
-        std::string result = Protocol::encode_connect_ack("user_123");
-        EXPECT_EQ(result, "CONNECT_ACK|user_id:user_123\n");
+        std::string user_id = "user_123";
+
+        auto packet = Protocol::encode_connect_ack(user_id);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT_ACK));
+
+        auto payload        = extract_payload(packet);
+        std::string decoded = Protocol::decode_connect_ack(payload);
+        EXPECT_EQ(decoded, user_id);
     }
 
-    TEST_F(ProtocolTest, EncodeMessage)
+    // Test MESSAGE encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeMessage)
     {
-        std::string result = Protocol::encode_message("Hello, world!");
-        EXPECT_EQ(result, "MESSAGE|text:Hello, world!\n");
+        std::string text = "Hello, world!";
+
+        auto packet = Protocol::encode_message(text);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::MESSAGE));
+
+        auto payload        = extract_payload(packet);
+        std::string decoded = Protocol::decode_message(payload);
+        EXPECT_EQ(decoded, text);
     }
 
-    TEST_F(ProtocolTest, EncodeMessageWithNewline)
+    TEST_F(ProtocolTest, EncodeDecodeMessageWithNewline)
     {
-        std::string result = Protocol::encode_message("Line 1\nLine 2");
-        EXPECT_EQ(result, "MESSAGE|text:Line 1\\\nLine 2\n");
+        std::string text = "Line 1\nLine 2\nLine 3";
+
+        auto packet  = Protocol::encode_message(text);
+        auto payload = extract_payload(packet);
+
+        std::string decoded = Protocol::decode_message(payload);
+        EXPECT_EQ(decoded, text);
     }
 
-    TEST_F(ProtocolTest, EncodeBroadcast)
+    // Test BROADCAST encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeBroadcast)
     {
-        std::string result = Protocol::encode_broadcast("alice", "Hello!", "2024-01-01T12:00:00");
-        EXPECT_EQ(result, "BROADCAST|username:alice|text:Hello!|timestamp:2024-01-01T12:00:00\n");
+        std::string username = "alice";
+        std::string text     = "Hello!";
+        int64_t timestamp_ms = 1234567890123LL;
+
+        auto packet = Protocol::encode_broadcast(username, text, timestamp_ms);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::BROADCAST));
+
+        auto payload = extract_payload(packet);
+
+        std::string decoded_username;
+        std::string decoded_text;
+        int64_t decoded_timestamp;
+
+        Protocol::decode_broadcast(payload, decoded_username, decoded_text, decoded_timestamp);
+
+        EXPECT_EQ(decoded_username, username);
+        EXPECT_EQ(decoded_text, text);
+        EXPECT_EQ(decoded_timestamp, timestamp_ms);
     }
 
-    TEST_F(ProtocolTest, EncodeUserJoined)
+    // Test USER_JOINED encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeUserJoined)
     {
-        std::string result = Protocol::encode_user_joined("bob", "user_456");
-        EXPECT_EQ(result, "USER_JOINED|username:bob|user_id:user_456\n");
+        std::string username = "bob";
+        std::string user_id  = "user_456";
+
+        auto packet = Protocol::encode_user_joined(username, user_id);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::USER_JOINED));
+
+        auto payload = extract_payload(packet);
+
+        std::string decoded_username;
+        std::string decoded_user_id;
+
+        Protocol::decode_user_joined(payload, decoded_username, decoded_user_id);
+
+        EXPECT_EQ(decoded_username, username);
+        EXPECT_EQ(decoded_user_id, user_id);
     }
 
-    TEST_F(ProtocolTest, EncodeUserLeft)
+    // Test USER_LEFT encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeUserLeft)
     {
-        std::string result = Protocol::encode_user_left("charlie");
-        EXPECT_EQ(result, "USER_LEFT|username:charlie\n");
+        std::string username = "charlie";
+
+        auto packet = Protocol::encode_user_left(username);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::USER_LEFT));
+
+        auto payload        = extract_payload(packet);
+        std::string decoded = Protocol::decode_user_left(payload);
+        EXPECT_EQ(decoded, username);
     }
 
+    // Test DISCONNECT encoding
     TEST_F(ProtocolTest, EncodeDisconnect)
     {
-        std::string result = Protocol::encode_disconnect();
-        EXPECT_EQ(result, "DISCONNECT\n");
+        auto packet = Protocol::encode_disconnect();
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::DISCONNECT));
+        EXPECT_EQ(header.size, 0); // No payload
     }
 
-    TEST_F(ProtocolTest, EncodeError)
+    // Test ERROR encoding/decoding
+    TEST_F(ProtocolTest, EncodeDecodeError)
     {
-        std::string result = Protocol::encode_error("Connection failed");
-        EXPECT_EQ(result, "ERROR|message:Connection failed\n");
+        std::string error_msg = "Connection failed";
+
+        auto packet = Protocol::encode_error(error_msg);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::ERROR_MSG));
+
+        auto payload        = extract_payload(packet);
+        std::string decoded = Protocol::decode_error(payload);
+        EXPECT_EQ(decoded, error_msg);
     }
 
-    TEST_F(ProtocolTest, EncodeInitEmpty)
+    // Test INIT encoding/decoding with empty data
+    TEST_F(ProtocolTest, EncodeDecodeInitEmpty)
     {
         std::vector<Message> messages;
         std::vector<User> users;
 
-        std::string result = Protocol::encode_init(messages, users);
-        EXPECT_EQ(result, "INIT|messages:|users:\n");
+        auto packet = Protocol::encode_init(messages, users);
+
+        auto header = extract_header(packet);
+        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::INIT));
+
+        auto payload = extract_payload(packet);
+
+        std::vector<Message> decoded_messages;
+        std::vector<User> decoded_users;
+
+        Protocol::decode_init(payload, decoded_messages, decoded_users);
+
+        EXPECT_TRUE(decoded_messages.empty());
+        EXPECT_TRUE(decoded_users.empty());
     }
 
-    TEST_F(ProtocolTest, EncodeInitWithData)
+    // Test INIT encoding/decoding with data
+    TEST_F(ProtocolTest, EncodeDecodeInitWithData)
     {
         std::vector<Message> messages = {
-            {"alice", "Hello", std::chrono::system_clock::now()}
+            {"alice", "Hello", std::chrono::system_clock::now()},
+            {"bob", "Hi there", std::chrono::system_clock::now()}
         };
         std::vector<User> users = {
             {"alice", "user_1"},
-            {"bob", "user_2"}
+            {"bob", "user_2"},
+            {"charlie", "user_3"}
         };
 
-        std::string result = Protocol::encode_init(messages, users);
+        auto packet  = Protocol::encode_init(messages, users);
+        auto payload = extract_payload(packet);
 
-        EXPECT_TRUE(result.starts_with("INIT|"));
-        EXPECT_NE(result.find("messages:"), std::string::npos);
-        EXPECT_NE(result.find("users:"), std::string::npos);
-        EXPECT_TRUE(result.ends_with("\n"));
+        std::vector<Message> decoded_messages;
+        std::vector<User> decoded_users;
+
+        Protocol::decode_init(payload, decoded_messages, decoded_users);
+
+        ASSERT_EQ(decoded_messages.size(), 2);
+        EXPECT_EQ(decoded_messages[0].username, "alice");
+        EXPECT_EQ(decoded_messages[0].text, "Hello");
+        EXPECT_EQ(decoded_messages[1].username, "bob");
+        EXPECT_EQ(decoded_messages[1].text, "Hi there");
+
+        ASSERT_EQ(decoded_users.size(), 3);
+        EXPECT_EQ(decoded_users[0].username, "alice");
+        EXPECT_EQ(decoded_users[0].user_id, "user_1");
+        EXPECT_EQ(decoded_users[1].username, "bob");
+        EXPECT_EQ(decoded_users[1].user_id, "user_2");
+        EXPECT_EQ(decoded_users[2].username, "charlie");
+        EXPECT_EQ(decoded_users[2].user_id, "user_3");
     }
 
-    TEST_F(ProtocolTest, ParseTypeConnect)
+    // Test packet size correctness
+    TEST_F(ProtocolTest, PacketSizeCorrect)
     {
-        std::string msg  = "CONNECT|username:alice\n";
-        MessageType type = Protocol::parse_type(msg);
-        EXPECT_EQ(type, MessageType::CONNECT);
+        std::string text = "Test message";
+        auto packet      = Protocol::encode_message(text);
+
+        auto header  = extract_header(packet);
+        auto payload = extract_payload(packet);
+
+        EXPECT_EQ(packet.size(), sizeof(MsgHeader) + header.size);
+        EXPECT_EQ(payload.size(), header.size);
     }
 
-    TEST_F(ProtocolTest, ParseTypeConnectAck)
+    // Test empty string handling
+    TEST_F(ProtocolTest, EmptyStringHandling)
     {
-        std::string msg  = "CONNECT_ACK|user_id:user_123\n";
-        MessageType type = Protocol::parse_type(msg);
-        EXPECT_EQ(type, MessageType::CONNECT_ACK);
+        std::string empty = "";
+
+        auto packet  = Protocol::encode_message(empty);
+        auto payload = extract_payload(packet);
+
+        std::string decoded = Protocol::decode_message(payload);
+        EXPECT_EQ(decoded, empty);
     }
 
-    TEST_F(ProtocolTest, ParseTypeBroadcast)
+    // Test long string handling
+    TEST_F(ProtocolTest, LongStringHandling)
     {
-        std::string msg  = "BROADCAST|username:alice|text:Hello\n";
-        MessageType type = Protocol::parse_type(msg);
-        EXPECT_EQ(type, MessageType::BROADCAST);
+        std::string long_text(10000, 'a');
+
+        auto packet  = Protocol::encode_message(long_text);
+        auto payload = extract_payload(packet);
+
+        std::string decoded = Protocol::decode_message(payload);
+        EXPECT_EQ(decoded, long_text);
     }
 
-    TEST_F(ProtocolTest, ParseTypeDisconnect)
+    // Test special characters
+    TEST_F(ProtocolTest, SpecialCharacters)
     {
-        std::string msg  = "DISCONNECT\n";
-        MessageType type = Protocol::parse_type(msg);
-        EXPECT_EQ(type, MessageType::DISCONNECT);
+        std::string special = "Test|with:special\nchars\\and\ttabs";
+
+        auto packet  = Protocol::encode_message(special);
+        auto payload = extract_payload(packet);
+
+        std::string decoded = Protocol::decode_message(payload);
+        EXPECT_EQ(decoded, special);
     }
 
-    TEST_F(ProtocolTest, ParseFieldUsername)
+    // Test BufferWriter/Reader
+    TEST_F(ProtocolTest, BufferWriterReader)
     {
-        std::string msg      = "CONNECT|username:alice\n";
-        std::string username = Protocol::parse_field(msg, "username");
-        EXPECT_EQ(username, "alice");
-    }
+        BufferWriter w;
+        w.write_string("test");
+        w.write(static_cast<int32_t>(42));
+        w.write(static_cast<uint16_t>(123));
 
-    TEST_F(ProtocolTest, ParseFieldText)
-    {
-        std::string msg  = "MESSAGE|text:Hello, world!\n";
-        std::string text = Protocol::parse_field(msg, "text");
-        EXPECT_EQ(text, "Hello, world!");
-    }
+        BufferReader r(w.data);
+        std::string str = r.read_string();
+        int32_t i32     = r.read<int32_t>();
+        uint16_t u16    = r.read<uint16_t>();
 
-    TEST_F(ProtocolTest, ParseFieldMultiple)
-    {
-        std::string msg = "BROADCAST|username:alice|text:Hello|timestamp:2024-01-01T12:00:00\n";
-
-        std::string username  = Protocol::parse_field(msg, "username");
-        std::string text      = Protocol::parse_field(msg, "text");
-        std::string timestamp = Protocol::parse_field(msg, "timestamp");
-
-        EXPECT_EQ(username, "alice");
-        EXPECT_EQ(text, "Hello");
-        EXPECT_EQ(timestamp, "2024-01-01T12:00:00");
-    }
-
-    TEST_F(ProtocolTest, ParseFieldNotFound)
-    {
-        std::string msg    = "CONNECT|username:alice\n";
-        std::string result = Protocol::parse_field(msg, "nonexistent");
-        EXPECT_EQ(result, "");
-    }
-
-    TEST_F(ProtocolTest, ParseFieldWithEscapedChars)
-    {
-        std::string msg  = "MESSAGE|text:Hello\\|world\\ntest\n";
-        std::string text = Protocol::parse_field(msg, "text");
-        EXPECT_EQ(text, "Hello");
-    }
-
-    TEST_F(ProtocolTest, ParseUsersEmpty)
-    {
-        std::string users_str   = "";
-        std::vector<User> users = Protocol::parse_users(users_str);
-        EXPECT_TRUE(users.empty());
-    }
-
-    TEST_F(ProtocolTest, ParseUsersSingle)
-    {
-        std::string users_str   = "alice,user_1";
-        std::vector<User> users = Protocol::parse_users(users_str);
-
-        ASSERT_EQ(users.size(), 1);
-        EXPECT_EQ(users[0].username, "alice");
-        EXPECT_EQ(users[0].user_id, "user_1");
-    }
-
-    TEST_F(ProtocolTest, ParseUsersMultiple)
-    {
-        std::string users_str   = "alice,user_1;bob,user_2;charlie,user_3";
-        std::vector<User> users = Protocol::parse_users(users_str);
-
-        ASSERT_EQ(users.size(), 3);
-
-        EXPECT_EQ(users[0].username, "alice");
-        EXPECT_EQ(users[0].user_id, "user_1");
-
-        EXPECT_EQ(users[1].username, "bob");
-        EXPECT_EQ(users[1].user_id, "user_2");
-
-        EXPECT_EQ(users[2].username, "charlie");
-        EXPECT_EQ(users[2].user_id, "user_3");
-    }
-
-    TEST_F(ProtocolTest, ParseMessagesEmpty)
-    {
-        std::string messages_str      = "";
-        std::vector<Message> messages = Protocol::parse_messages(messages_str);
-        EXPECT_TRUE(messages.empty());
-    }
-
-    TEST_F(ProtocolTest, ParseMessagesSingle)
-    {
-        std::string messages_str      = "alice,Hello world,2024-01-01T12:00:00";
-        std::vector<Message> messages = Protocol::parse_messages(messages_str);
-
-        ASSERT_EQ(messages.size(), 1);
-        EXPECT_EQ(messages[0].username, "alice");
-        EXPECT_EQ(messages[0].text, "Hello world");
-    }
-
-    TEST_F(ProtocolTest, ParseMessagesMultiple)
-    {
-        std::string messages_str      = "alice,Hello,2024-01-01T12:00:00;bob,Hi there,2024-01-01T12:01:00";
-        std::vector<Message> messages = Protocol::parse_messages(messages_str);
-
-        ASSERT_EQ(messages.size(), 2);
-
-        EXPECT_EQ(messages[0].username, "alice");
-        EXPECT_EQ(messages[0].text, "Hello");
-
-        EXPECT_EQ(messages[1].username, "bob");
-        EXPECT_EQ(messages[1].text, "Hi there");
-    }
-
-    TEST_F(ProtocolTest, EscapeUnescapeRoundtrip)
-    {
-        std::vector<std::string> test_strings = {
-            "normal text",
-            "text:with:colons",
-            "text\\with\\backslashes"
-        };
-
-        for (const auto& original : test_strings)
-        {
-            std::string msg     = Protocol::encode_message(original);
-            std::string decoded = Protocol::parse_field(msg, "text");
-            EXPECT_EQ(decoded, original) << "Failed for: " << original;
-        }
-    }
-
-    TEST_F(ProtocolTest, CompleteMessageRoundtrip)
-    {
-        std::string original_username = "alice|special";
-        std::string original_text     = "Hello\nworld|test:data";
-        std::string timestamp         = "2024-01-01T12:00:00";
-
-        std::string encoded = Protocol::encode_broadcast(original_username, original_text, timestamp);
-
-        MessageType type             = Protocol::parse_type(encoded);
-        std::string parsed_username  = Protocol::parse_field(encoded, "username");
-        std::string parsed_text      = Protocol::parse_field(encoded, "text");
-        std::string parsed_timestamp = Protocol::parse_field(encoded, "timestamp");
-
-        EXPECT_EQ(type, MessageType::BROADCAST);
-        EXPECT_EQ(parsed_username, "alice");
-        EXPECT_EQ(parsed_text, "Hello\nworld");
-        EXPECT_EQ(parsed_timestamp, timestamp);
+        EXPECT_EQ(str, "test");
+        EXPECT_EQ(i32, 42);
+        EXPECT_EQ(u16, 123);
     }
 } // namespace chat

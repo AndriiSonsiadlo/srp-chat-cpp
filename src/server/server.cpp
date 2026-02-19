@@ -85,11 +85,13 @@ namespace chat::server
             // message loop
             while (conn->is_open() && running_)
             {
-                std::string message = conn->receive_line();
-                MessageType type    = Protocol::parse_type(message);
+                auto [type, payload] = conn->receive_packet();
 
                 if (type == MessageType::MESSAGE)
-                    handle_message(conn, username, message);
+                {
+                    std::string text = Protocol::decode_message(payload);
+                    handle_message(conn, username, text);
+                }
                 else if (type == MessageType::DISCONNECT)
                     break;
                 else
@@ -112,64 +114,86 @@ namespace chat::server
 
     std::optional<std::string> Server::handle_connect(const std::shared_ptr<Connection>& conn)
     {
-        // wait for CONNECT message
-        const std::string connect_msg = conn->receive_line();
-        if (const MessageType type = Protocol::parse_type(connect_msg); type != MessageType::CONNECT)
+        try
         {
-            conn->send(Protocol::encode_error("Expected CONNECT message"));
+            // wait for CONNECT message
+            auto [type, payload] = conn->receive_packet();
+
+            if (type != MessageType::CONNECT)
+            {
+                auto error_packet = Protocol::encode_error("Expected CONNECT message");
+                conn->send_packet(error_packet);
+                conn->close();
+                return std::nullopt;
+            }
+
+            std::string username = Protocol::decode_connect(payload);
+
+            if (username.empty())
+            {
+                auto error_packet = Protocol::encode_error("Username cannot be empty");
+                conn->send_packet(error_packet);
+                conn->close();
+                return std::nullopt;
+            }
+
+            if (connection_manager_->username_exists(username))
+            {
+                auto error_packet = Protocol::encode_error("Username already exists");
+                conn->send_packet(error_packet);
+                conn->close();
+                return std::nullopt;
+            }
+
+            // generate user ID and add connection
+            const std::string user_id = generate_user_id();
+            connection_manager_->add(user_id, conn);
+            connection_manager_->set_username(user_id, username);
+
+            std::cout << "User '" << username << "' (ID: " << user_id << ") connected" << std::endl;
+
+            // send CONNECT_ACK
+            auto ack_packet = Protocol::encode_connect_ack(user_id);
+            conn->send_packet(ack_packet);
+
+            // send INIT with message history and active users
+            {
+                std::lock_guard<std::mutex> lock(message_mutex_);
+                const auto users = connection_manager_->get_active_users();
+                auto init_packet = Protocol::encode_init(message_history_, users);
+                conn->send_packet(init_packet);
+            }
+
+            // notify other users
+            auto join_packet = Protocol::encode_user_joined(username, user_id);
+            connection_manager_->broadcast(join_packet, user_id);
+
+            return user_id;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error handling connect: " << e.what() << std::endl;
             conn->close();
             return std::nullopt;
         }
-
-        const std::string username = Protocol::parse_field(connect_msg, "username");
-        if (username.empty())
-        {
-            conn->send(Protocol::encode_error("Username cannot be empty"));
-            conn->close();
-            return std::nullopt;
-        }
-
-        if (connection_manager_->username_exists(username))
-        {
-            conn->send(Protocol::encode_error("Username already exists"));
-            conn->close();
-            return std::nullopt;
-        }
-
-        // generate user ID and add connection
-        const std::string user_id = generate_user_id();
-        connection_manager_->add(user_id, conn);
-        connection_manager_->set_username(user_id, username);
-
-        std::cout << "User '" << username << "' (ID: " << user_id << ") connected" << std::endl;
-
-        // send CONNECT_ACK
-        conn->send(Protocol::encode_connect_ack(user_id));
-
-        // send INIT with message history and active users
-        {
-            std::lock_guard<std::mutex> lock(message_mutex_);
-            const auto users = connection_manager_->get_active_users();
-            conn->send(Protocol::encode_init(message_history_, users));
-        }
-
-        // notify other users
-        const std::string join_msg = Protocol::encode_user_joined(username, user_id);
-        connection_manager_->broadcast(join_msg, user_id);
-
-        return user_id;
     }
 
     void Server::handle_message(const std::shared_ptr<Connection>& conn,
                                 const std::string& username,
-                                const std::string& message)
+                                const std::string& text)
     {
         if (username.empty())
             return;
 
-        const std::string text = Protocol::parse_field(message, "text");
-        const std::string timestamp = get_timestamp();
-        std::cout << "[" << timestamp << "] " << username << ": " << text << std::endl;
+        const auto now = std::chrono::system_clock::now();
+        const auto duration = now.time_since_epoch();
+        const int64_t timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+
+        const auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::ostringstream oss;
+        oss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
+
+        std::cout << "[" << oss.str() << "] " << username << ": " << text << std::endl;
 
         // store message in history
         {
@@ -177,7 +201,7 @@ namespace chat::server
             Message msg{
                 .username = username,
                 .text = text,
-                .timestamp = std::chrono::system_clock::now()
+                .timestamp = now
             };
             message_history_.push_back(std::move(msg));
 
@@ -187,8 +211,8 @@ namespace chat::server
         }
 
         // broadcast to all users
-        const std::string broadcast_msg = Protocol::encode_broadcast(username, text, timestamp);
-        connection_manager_->broadcast(broadcast_msg);
+        auto broadcast_packet = Protocol::encode_broadcast(username, text, timestamp_ms);
+        connection_manager_->broadcast(broadcast_packet);
     }
 
     void Server::handle_disconnect(const std::string& user_id) const
@@ -200,8 +224,8 @@ namespace chat::server
         if (!username.empty())
         {
             // notify other users
-            const std::string left_msg = Protocol::encode_user_left(username);
-            connection_manager_->broadcast(left_msg);
+            auto left_packet = Protocol::encode_user_left(username);
+            connection_manager_->broadcast(left_packet);
         }
     }
 

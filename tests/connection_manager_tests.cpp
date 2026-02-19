@@ -276,7 +276,7 @@ namespace chat::server
 
     TEST_F(ConnectionManagerTest, SendToNonexistentUser)
     {
-        bool result = manager_.send_to("nonexistent", "test message");
+        bool result = manager_.send_to("nonexistent", {});
         EXPECT_FALSE(result);
     }
 

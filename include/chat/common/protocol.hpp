@@ -9,27 +9,35 @@ namespace chat
     class Protocol
     {
     public:
-        static std::string encode_connect(const std::string& username);
-        static std::string encode_connect_ack(const std::string& user_id);
-        static std::string encode_init(
+        static std::vector<uint8_t> encode_connect(const std::string& username);
+        static std::vector<uint8_t> encode_connect_ack(const std::string& user_id);
+        static std::vector<uint8_t> encode_init(
             const std::vector<Message>& messages,
             const std::vector<User>& users);
-        static std::string encode_message(const std::string& text);
-        static std::string encode_broadcast(
+        static std::vector<uint8_t> encode_message(const std::string& text);
+        static std::vector<uint8_t> encode_broadcast(
             const std::string& username,
             const std::string& text,
-            const std::string& timestamp);
-        static std::string encode_user_joined(const std::string& username, const std::string& user_id);
-        static std::string encode_user_left(const std::string& username);
-        static std::string encode_disconnect();
-        static std::string encode_error(const std::string& error_msg);
-        static MessageType parse_type(const std::string& message);
-        static std::string parse_field(const std::string& message, const std::string& field_name);
-        static std::vector<Message> parse_messages(const std::string& messages_str);
-        static std::vector<User> parse_users(const std::string& users_str);
+            int64_t timestamp_ms);
+        static std::vector<uint8_t> encode_user_joined(const std::string& username, const std::string& user_id);
+        static std::vector<uint8_t> encode_user_left(const std::string& username);
+        static std::vector<uint8_t> encode_disconnect();
+        static std::vector<uint8_t> encode_error(const std::string& error_msg);
 
-    private:
-        static std::string escape(const std::string& str);
-        static std::string unescape(const std::string& str);
+        static std::string decode_connect(const std::vector<uint8_t>& payload);
+        static std::string decode_connect_ack(const std::vector<uint8_t>& payload);
+        static void decode_init(const std::vector<uint8_t>& payload,
+                                std::vector<Message>& messages,
+                                std::vector<User>& users);
+        static std::string decode_message(const std::vector<uint8_t>& payload);
+        static void decode_broadcast(const std::vector<uint8_t>& payload,
+                                     std::string& username,
+                                     std::string& text,
+                                     int64_t& timestamp_ms);
+        static void decode_user_joined(const std::vector<uint8_t>& payload,
+                                       std::string& username,
+                                       std::string& user_id);
+        static std::string decode_user_left(const std::vector<uint8_t>& payload);
+        static std::string decode_error(const std::vector<uint8_t>& payload);
     };
 } // namespace chat

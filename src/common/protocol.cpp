@@ -1,216 +1,208 @@
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
 #include "chat/common/protocol.hpp"
 
+#include <chrono>
 
 namespace chat
 {
-    using Str = std::string;
-
-    std::string Protocol::escape(const std::string& str)
+    template <typename T>
+    std::vector<uint8_t> serialize(const T& obj)
     {
-        std::string result;
-        for (const char c : str)
+        BufferWriter w;
+        std::apply([&](auto&&... fields)
         {
-            if (c == '|' || c == ':' || c == '\n' || c == '\\')
-                result += '\\';
-            result += c;
-        }
-        return result;
+            (w.write_string(fields), ...);
+        }, obj.as_tuple());
+        return std::move(w.data);
     }
 
-    std::string Protocol::unescape(const std::string& str)
+    template <typename T>
+    T deserialize(const std::vector<uint8_t>& data)
     {
-        std::string result;
-        bool escaped = false;
-        for (const char c : str)
-        {
-            if (escaped)
-            {
-                result  += c;
-                escaped = false;
-            }
-            else if (c == '\\')
-            {
-                escaped = true;
-            }
-            else
-            {
-                result += c;
-            }
-        }
-        return result;
+        BufferReader r(data);
+        return r.read<T>();
     }
 
-    std::string Protocol::encode_connect(const std::string& username)
+    // CONNECT: username
+    std::vector<uint8_t> Protocol::encode_connect(const std::string& username)
     {
-        return "CONNECT|username:" + escape(username) + "\n";
+        BufferWriter w;
+        w.write_string(username);
+        return make_packet(MessageType::CONNECT, w.data);
     }
 
-    std::string Protocol::encode_connect_ack(const std::string& user_id)
+    std::string Protocol::decode_connect(const std::vector<uint8_t>& payload)
     {
-        return "CONNECT_ACK|user_id:" + escape(user_id) + "\n";
+        BufferReader r(payload);
+        return r.read_string();
     }
 
-    std::string Protocol::encode_init(
+    // CONNECT_ACK: user_id
+    std::vector<uint8_t> Protocol::encode_connect_ack(const std::string& user_id)
+    {
+        BufferWriter w;
+        w.write_string(user_id);
+        return make_packet(MessageType::CONNECT_ACK, w.data);
+    }
+
+    std::string Protocol::decode_connect_ack(const std::vector<uint8_t>& payload)
+    {
+        BufferReader r(payload);
+        return r.read_string();
+    }
+
+    // INIT: message_count, [username, text, timestamp_ms]*, user_count, [username, user_id]*
+    std::vector<uint8_t> Protocol::encode_init(
         const std::vector<Message>& messages,
         const std::vector<User>& users)
     {
-        std::ostringstream oss;
-        oss << "INIT|";
+        BufferWriter w;
 
-        // encode messages
-        oss << "messages:";
-        for (size_t i = 0; i < messages.size(); ++i)
+        // write messages
+        w.write(static_cast<uint32_t>(messages.size()));
+        for (const auto& msg : messages)
         {
-            if (i > 0) oss << ";";
+            w.write_string(msg.username);
+            w.write_string(msg.text);
 
-            auto time_t = std::chrono::system_clock::to_time_t(messages[i].timestamp);
-            std::ostringstream time_oss;
-            time_oss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
-
-            oss << escape(messages[i].username) << ","
-                << escape(messages[i].text) << ","
-                << time_oss.str();
+            auto duration = msg.timestamp.time_since_epoch();
+            auto millis   = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+            w.write(static_cast<int64_t>(millis));
         }
 
-        // encode users
-        oss << "|users:";
-        for (size_t i = 0; i < users.size(); ++i)
+        // write users
+        w.write(static_cast<uint32_t>(users.size()));
+        for (const auto& user : users)
         {
-            if (i > 0) oss << ";";
-            oss << escape(users[i].username) << "," << escape(users[i].user_id);
+            w.write_string(user.username);
+            w.write_string(user.user_id);
         }
 
-        oss << "\n";
-        return oss.str();
+        return make_packet(MessageType::INIT, w.data);
     }
 
-    std::string Protocol::encode_message(const std::string& text)
+    void Protocol::decode_init(const std::vector<uint8_t>& payload,
+                               std::vector<Message>& messages,
+                               std::vector<User>& users)
     {
-        return "MESSAGE|text:" + escape(text) + "\n";
+        BufferReader r(payload);
+
+        // read messages
+        uint32_t msg_count = r.read<uint32_t>();
+        messages.reserve(msg_count);
+
+        for (uint32_t i = 0; i < msg_count; ++i)
+        {
+            Message msg;
+            msg.username = r.read_string();
+            msg.text     = r.read_string();
+
+            int64_t timestamp_ms = r.read<int64_t>();
+            msg.timestamp        = std::chrono::system_clock::time_point(
+                std::chrono::milliseconds(timestamp_ms));
+
+            messages.push_back(std::move(msg));
+        }
+
+        // read users
+        uint32_t user_count = r.read<uint32_t>();
+        users.reserve(user_count);
+
+        for (uint32_t i = 0; i < user_count; ++i)
+        {
+            User user;
+            user.username = r.read_string();
+            user.user_id  = r.read_string();
+            users.push_back(std::move(user));
+        }
     }
 
-    std::string Protocol::encode_broadcast(
+    // MESSAGE: text
+    std::vector<uint8_t> Protocol::encode_message(const std::string& text)
+    {
+        BufferWriter w;
+        w.write_string(text);
+        return make_packet(MessageType::MESSAGE, w.data);
+    }
+
+    std::string Protocol::decode_message(const std::vector<uint8_t>& payload)
+    {
+        BufferReader r(payload);
+        return r.read_string();
+    }
+
+    // BROADCAST: username, text, timestamp_ms
+    std::vector<uint8_t> Protocol::encode_broadcast(
         const std::string& username,
         const std::string& text,
-        const std::string& timestamp)
+        int64_t timestamp_ms)
     {
-        return "BROADCAST|username:" + escape(username) +
-            "|text:" + escape(text) +
-            "|timestamp:" + timestamp + "\n";
+        BufferWriter w;
+        w.write_string(username);
+        w.write_string(text);
+        w.write(timestamp_ms);
+        return make_packet(MessageType::BROADCAST, w.data);
     }
 
-    std::string Protocol::encode_user_joined(
-        const std::string& username,
-        const std::string& user_id)
+    void Protocol::decode_broadcast(const std::vector<uint8_t>& payload,
+                                    std::string& username,
+                                    std::string& text,
+                                    int64_t& timestamp_ms)
     {
-        return "USER_JOINED|username:" + escape(username) +
-            "|user_id:" + escape(user_id) + "\n";
+        BufferReader r(payload);
+        username     = r.read_string();
+        text         = r.read_string();
+        timestamp_ms = r.read<int64_t>();
     }
 
-    std::string Protocol::encode_user_left(const std::string& username)
+    // USER_JOINED: username, user_id
+    std::vector<uint8_t> Protocol::encode_user_joined(const std::string& username, const std::string& user_id)
     {
-        return "USER_LEFT|username:" + escape(username) + "\n";
+        BufferWriter w;
+        w.write_string(username);
+        w.write_string(user_id);
+        return make_packet(MessageType::USER_JOINED, w.data);
     }
 
-    std::string Protocol::encode_disconnect()
+    void Protocol::decode_user_joined(const std::vector<uint8_t>& payload,
+                                      std::string& username,
+                                      std::string& user_id)
     {
-        return "DISCONNECT\n";
+        BufferReader r(payload);
+        username = r.read_string();
+        user_id  = r.read_string();
     }
 
-    std::string Protocol::encode_error(const std::string& error_msg)
+    // USER_LEFT: username
+    std::vector<uint8_t> Protocol::encode_user_left(const std::string& username)
     {
-        return "ERROR|message:" + escape(error_msg) + "\n";
+        BufferWriter w;
+        w.write_string(username);
+        return make_packet(MessageType::USER_LEFT, w.data);
     }
 
-    MessageType Protocol::parse_type(const std::string& message)
+    std::string Protocol::decode_user_left(const std::vector<uint8_t>& payload)
     {
-        size_t pos = message.find('|');
-        if (pos == std::string::npos)
-            pos = message.find('\n');
-
-        const std::string type_str = message.substr(0, pos);
-        return string_to_message_type(type_str);
+        BufferReader r(payload);
+        return r.read_string();
     }
 
-    std::string Protocol::parse_field(const std::string& message, const std::string& field_name)
+    // DISCONNECT: no payload
+    std::vector<uint8_t> Protocol::encode_disconnect()
     {
-        std::string search = "|" + field_name + ":";
-        size_t start       = message.find(search);
-
-        if (start == std::string::npos)
-            return "";
-
-        start      += search.length();
-        size_t end = message.find('|', start);
-        if (end == std::string::npos)
-            end = message.find('\n', start);
-        if (end == std::string::npos)
-            return unescape(message.substr(start));
-
-        return unescape(message.substr(start, end - start));
+        return make_packet(MessageType::DISCONNECT, {});
     }
 
-    std::vector<Message> Protocol::parse_messages(const std::string& messages_str)
+    // ERROR: error_msg
+    std::vector<uint8_t> Protocol::encode_error(const std::string& error_msg)
     {
-        std::vector<Message> messages;
-
-        if (messages_str.empty())
-            return messages;
-
-        std::istringstream iss(messages_str);
-        std::string msg_token;
-
-        while (std::getline(iss, msg_token, ';'))
-        {
-            std::istringstream msg_iss(msg_token);
-            std::string username, text, timestamp;
-
-            std::getline(msg_iss, username, ',');
-            std::getline(msg_iss, text, ',');
-            std::getline(msg_iss, timestamp, ',');
-
-            Message msg{
-                .username = unescape(username),
-                .text = unescape(text),
-                .timestamp = std::chrono::system_clock::now()
-            };
-
-            messages.push_back(msg);
-        }
-
-        return messages;
+        BufferWriter w;
+        w.write_string(error_msg);
+        return make_packet(MessageType::ERROR_MSG, w.data);
     }
 
-    std::vector<User> Protocol::parse_users(const std::string& users_str)
+    std::string Protocol::decode_error(const std::vector<uint8_t>& payload)
     {
-        std::vector<User> users;
-
-        if (users_str.empty())
-        {
-            return users;
-        }
-
-        std::istringstream iss(users_str);
-        std::string user_token;
-
-        while (std::getline(iss, user_token, ';'))
-        {
-            std::istringstream user_iss(user_token);
-            std::string username, user_id;
-
-            std::getline(user_iss, username, ',');
-            std::getline(user_iss, user_id, ',');
-
-            User user;
-            user.username = unescape(username);
-            user.user_id  = unescape(user_id);
-
-            users.push_back(user);
-        }
-
-        return users;
+        BufferReader r(payload);
+        return r.read_string();
     }
 } // namespace chat

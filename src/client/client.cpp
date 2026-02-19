@@ -3,6 +3,7 @@
 #include <iostream>
 #include <iomanip>
 #include <utility>
+#include <chrono>
 
 namespace chat::client
 {
@@ -97,24 +98,24 @@ namespace chat::client
         std::cout << "Connected! Authenticating as '" << username_ << "'..." << std::endl;
 
         // send CONNECT message
-        std::string connect_msg = Protocol::encode_connect(username_);
-        boost::asio::write(socket_, boost::asio::buffer(connect_msg));
+        auto connect_packet = Protocol::encode_connect(username_);
+        send_packet(connect_packet);
 
         // wait for CONNECT_ACK
-        std::string line;
-        boost::asio::read_until(socket_, buffer_, '\n');
-        std::istream is(&buffer_);
-        std::getline(is, line);
-        line += "\n";
-
-        handle_connect_ack(line);
+        auto [ack_type, ack_payload] = receive_packet();
+        if (ack_type != MessageType::CONNECT_ACK)
+        {
+            throw std::runtime_error("Expected CONNECT_ACK");
+        }
+        handle_connect_ack(ack_payload);
 
         // wait for INIT
-        boost::asio::read_until(socket_, buffer_, '\n');
-        std::getline(is, line);
-        line += "\n";
-
-        handle_init(line);
+        auto [init_type, init_payload] = receive_packet();
+        if (init_type != MessageType::INIT)
+        {
+            throw std::runtime_error("Expected INIT");
+        }
+        handle_init(init_payload);
 
         connected_ = true;
         std::cout << "Successfully joined the chat!" << std::endl;
@@ -126,8 +127,8 @@ namespace chat::client
         if (socket_.is_open())
             try
             {
-                std::string disconnect_msg = Protocol::encode_disconnect();
-                boost::asio::write(socket_, boost::asio::buffer(disconnect_msg));
+                auto disconnect_packet = Protocol::encode_disconnect();
+                send_packet(disconnect_packet);
                 socket_.close();
             }
             catch (...)
@@ -144,8 +145,8 @@ namespace chat::client
 
         try
         {
-            std::string msg = Protocol::encode_message(text);
-            boost::asio::write(socket_, boost::asio::buffer(msg));
+            auto packet = Protocol::encode_message(text);
+            send_packet(packet);
         }
         catch (const std::exception& e)
         {
@@ -154,32 +155,48 @@ namespace chat::client
         }
     }
 
+    void Client::send_packet(const std::vector<uint8_t>& packet)
+    {
+        boost::asio::write(socket_, boost::asio::buffer(packet));
+    }
+
+    std::pair<MessageType, std::vector<uint8_t>> Client::receive_packet()
+    {
+        // read header
+        MsgHeader header;
+        boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
+
+        // read payload
+        std::vector<uint8_t> payload(header.size);
+        if (header.size > 0)
+        {
+            boost::asio::read(socket_, boost::asio::buffer(payload));
+        }
+
+        return {static_cast<MessageType>(header.type), std::move(payload)};
+    }
+
     void Client::receive_loop()
     {
         try
         {
             while (running_ && connected_)
             {
-                std::string line;
-                boost::asio::read_until(socket_, buffer_, '\n');
-                std::istream is(&buffer_);
-                std::getline(is, line);
-                line += "\n";
+                auto [type, payload] = receive_packet();
 
-                const MessageType type = Protocol::parse_type(line);
                 switch (type)
                 {
                     case MessageType::BROADCAST:
-                        handle_broadcast(line);
+                        handle_broadcast(payload);
                         break;
                     case MessageType::USER_JOINED:
-                        handle_user_joined(line);
+                        handle_user_joined(payload);
                         break;
                     case MessageType::USER_LEFT:
-                        handle_user_left(line);
+                        handle_user_left(payload);
                         break;
                     case MessageType::ERROR_MSG:
-                        handle_error(line);
+                        handle_error(payload);
                         break;
                     default:
                         std::cerr << "Unknown message type" << std::endl;
@@ -196,39 +213,47 @@ namespace chat::client
         }
     }
 
-    void Client::handle_connect_ack(const std::string& message)
+    void Client::handle_connect_ack(const std::vector<uint8_t>& payload)
     {
-        user_id_ = Protocol::parse_field(message, "user_id");
+        user_id_ = Protocol::decode_connect_ack(payload);
     }
 
-    void Client::handle_init(const std::string& message)
+    void Client::handle_init(const std::vector<uint8_t>& payload)
     {
-        const std::string messages_str = Protocol::parse_field(message, "messages");
-        const std::string users_str    = Protocol::parse_field(message, "users");
+        std::vector<Message> messages;
+        std::vector<User> users;
+
+        Protocol::decode_init(payload, messages, users);
 
         {
             std::lock_guard<std::mutex> lock(messages_mutex_);
-            messages_ = Protocol::parse_messages(messages_str);
+            messages_ = std::move(messages);
         }
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
-            users_ = Protocol::parse_users(users_str);
+            users_ = std::move(users);
         }
     }
 
-    void Client::handle_broadcast(const std::string& message)
+    void Client::handle_broadcast(const std::vector<uint8_t>& payload)
     {
-        const std::string username  = Protocol::parse_field(message, "username");
-        const std::string text      = Protocol::parse_field(message, "text");
-        const std::string timestamp = Protocol::parse_field(message, "timestamp");
+        std::string username;
+        std::string text;
+        int64_t timestamp_ms;
+
+        Protocol::decode_broadcast(payload, username, text, timestamp_ms);
+
+        // convert timestamp to time_point
+        auto timestamp = std::chrono::system_clock::time_point(
+            std::chrono::milliseconds(timestamp_ms));
 
         {
             std::lock_guard<std::mutex> lock(messages_mutex_);
             Message msg{
                 .username = username,
                 .text = text,
-                .timestamp = std::chrono::system_clock::now()
+                .timestamp = timestamp
             };
             messages_.push_back(std::move(msg));
 
@@ -241,19 +266,25 @@ namespace chat::client
             std::lock_guard<std::mutex> lock(ui_mutex_);
             std::cout << "\r" << std::string(80, ' ') << "\r"; // Clear current line
 
+            auto time_t = std::chrono::system_clock::to_time_t(timestamp);
+            std::ostringstream oss;
+            oss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
+
             if (username == username_)
-                std::cout << "[" << timestamp << "] \033[32m" << username << "\033[0m: " << text << std::endl;
+                std::cout << "[" << oss.str() << "] \033[32m" << username << "\033[0m: " << text << std::endl;
             else
-                std::cout << "[" << timestamp << "] \033[36m" << username << "\033[0m: " << text << std::endl;
+                std::cout << "[" << oss.str() << "] \033[36m" << username << "\033[0m: " << text << std::endl;
 
             std::cout << "> " << std::flush;
         }
     }
 
-    void Client::handle_user_joined(const std::string& message)
+    void Client::handle_user_joined(const std::vector<uint8_t>& payload)
     {
-        const std::string username = Protocol::parse_field(message, "username");
-        const std::string user_id  = Protocol::parse_field(message, "user_id");
+        std::string username;
+        std::string user_id;
+
+        Protocol::decode_user_joined(payload, username, user_id);
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
@@ -268,9 +299,9 @@ namespace chat::client
         }
     }
 
-    void Client::handle_user_left(const std::string& message)
+    void Client::handle_user_left(const std::vector<uint8_t>& payload)
     {
-        std::string username = Protocol::parse_field(message, "username");
+        std::string username = Protocol::decode_user_left(payload);
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
@@ -285,9 +316,9 @@ namespace chat::client
         }
     }
 
-    void Client::handle_error(const std::string& message)
+    void Client::handle_error(const std::vector<uint8_t>& payload)
     {
-        const std::string error_msg = Protocol::parse_field(message, "message");
+        std::string error_msg = Protocol::decode_error(payload);
         std::cerr << "Error from server: " << error_msg << std::endl;
         connected_ = false;
     }
