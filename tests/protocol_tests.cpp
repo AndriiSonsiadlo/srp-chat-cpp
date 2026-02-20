@@ -1,4 +1,5 @@
 #include "chat/common/protocol.hpp"
+#include "chat/common/messages.hpp"
 
 #include <gtest/gtest.h>
 #include <chrono>
@@ -36,7 +37,7 @@ namespace chat
     {
         std::string username = "alice";
 
-        auto packet = Protocol::encode_connect(username);
+        auto packet = Protocol::encode(MessageType::CONNECT, ConnectMsg{username});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT));
@@ -45,7 +46,7 @@ namespace chat
         auto payload = extract_payload(packet);
         EXPECT_EQ(payload.size(), header.size);
 
-        std::string decoded = Protocol::decode_connect(payload);
+        auto [decoded] = Protocol::decode<ConnectMsg>(payload);
         EXPECT_EQ(decoded, username);
     }
 
@@ -53,10 +54,10 @@ namespace chat
     {
         std::string username = "alice|bob:test";
 
-        auto packet  = Protocol::encode_connect(username);
+        auto packet  = Protocol::encode(MessageType::CONNECT, ConnectMsg{username});
         auto payload = extract_payload(packet);
 
-        std::string decoded = Protocol::decode_connect(payload);
+        auto [decoded] = Protocol::decode<ConnectMsg>(payload);
         EXPECT_EQ(decoded, username);
     }
 
@@ -65,13 +66,13 @@ namespace chat
     {
         std::string user_id = "user_123";
 
-        auto packet = Protocol::encode_connect_ack(user_id);
+        auto packet = Protocol::encode(MessageType::CONNECT_ACK, ConnectAckMsg{user_id});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT_ACK));
 
-        auto payload        = extract_payload(packet);
-        std::string decoded = Protocol::decode_connect_ack(payload);
+        auto payload   = extract_payload(packet);
+        auto [decoded] = Protocol::decode<ConnectAckMsg>(payload);
         EXPECT_EQ(decoded, user_id);
     }
 
@@ -80,13 +81,13 @@ namespace chat
     {
         std::string text = "Hello, world!";
 
-        auto packet = Protocol::encode_message(text);
+        auto packet = Protocol::encode(MessageType::MESSAGE, TextMsg{text});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::MESSAGE));
 
-        auto payload        = extract_payload(packet);
-        std::string decoded = Protocol::decode_message(payload);
+        auto payload   = extract_payload(packet);
+        auto [decoded] = Protocol::decode<TextMsg>(payload);
         EXPECT_EQ(decoded, text);
     }
 
@@ -94,10 +95,10 @@ namespace chat
     {
         std::string text = "Line 1\nLine 2\nLine 3";
 
-        auto packet  = Protocol::encode_message(text);
+        auto packet  = Protocol::encode(MessageType::MESSAGE, TextMsg{text});
         auto payload = extract_payload(packet);
 
-        std::string decoded = Protocol::decode_message(payload);
+        auto [decoded] = Protocol::decode<TextMsg>(payload);
         EXPECT_EQ(decoded, text);
     }
 
@@ -108,18 +109,13 @@ namespace chat
         std::string text     = "Hello!";
         int64_t timestamp_ms = 1234567890123LL;
 
-        auto packet = Protocol::encode_broadcast(username, text, timestamp_ms);
+        auto packet = Protocol::encode(MessageType::BROADCAST, BroadcastMsg{username, text, timestamp_ms});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::BROADCAST));
 
-        auto payload = extract_payload(packet);
-
-        std::string decoded_username;
-        std::string decoded_text;
-        int64_t decoded_timestamp;
-
-        Protocol::decode_broadcast(payload, decoded_username, decoded_text, decoded_timestamp);
+        auto payload                                             = extract_payload(packet);
+        auto [decoded_username, decoded_text, decoded_timestamp] = Protocol::decode<BroadcastMsg>(payload);
 
         EXPECT_EQ(decoded_username, username);
         EXPECT_EQ(decoded_text, text);
@@ -132,17 +128,14 @@ namespace chat
         std::string username = "bob";
         std::string user_id  = "user_456";
 
-        auto packet = Protocol::encode_user_joined(username, user_id);
+        auto packet = Protocol::encode(MessageType::USER_JOINED, UserJoinedMsg{username, user_id});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::USER_JOINED));
 
         auto payload = extract_payload(packet);
 
-        std::string decoded_username;
-        std::string decoded_user_id;
-
-        Protocol::decode_user_joined(payload, decoded_username, decoded_user_id);
+        auto [decoded_username, decoded_user_id] = Protocol::decode<UserJoinedMsg>(payload);
 
         EXPECT_EQ(decoded_username, username);
         EXPECT_EQ(decoded_user_id, user_id);
@@ -153,20 +146,20 @@ namespace chat
     {
         std::string username = "charlie";
 
-        auto packet = Protocol::encode_user_left(username);
+        auto packet = Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::USER_LEFT));
 
-        auto payload        = extract_payload(packet);
-        std::string decoded = Protocol::decode_user_left(payload);
+        auto payload   = extract_payload(packet);
+        auto [decoded] = Protocol::decode<UserLeftMsg>(payload);
         EXPECT_EQ(decoded, username);
     }
 
     // Test DISCONNECT encoding
     TEST_F(ProtocolTest, EncodeDisconnect)
     {
-        auto packet = Protocol::encode_disconnect();
+        auto packet = Protocol::encode(MessageType::DISCONNECT);
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::DISCONNECT));
@@ -178,13 +171,13 @@ namespace chat
     {
         std::string error_msg = "Connection failed";
 
-        auto packet = Protocol::encode_error(error_msg);
+        auto packet = Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{error_msg});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::ERROR_MSG));
 
-        auto payload        = extract_payload(packet);
-        std::string decoded = Protocol::decode_error(payload);
+        auto payload   = extract_payload(packet);
+        auto [decoded] = Protocol::decode<ErrorMsg>(payload);
         EXPECT_EQ(decoded, error_msg);
     }
 
@@ -194,17 +187,13 @@ namespace chat
         std::vector<Message> messages;
         std::vector<User> users;
 
-        auto packet = Protocol::encode_init(messages, users);
+        auto packet = Protocol::encode(MessageType::INIT, InitMsg{messages, users});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::INIT));
 
-        auto payload = extract_payload(packet);
-
-        std::vector<Message> decoded_messages;
-        std::vector<User> decoded_users;
-
-        Protocol::decode_init(payload, decoded_messages, decoded_users);
+        auto payload                           = extract_payload(packet);
+        auto [decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
 
         EXPECT_TRUE(decoded_messages.empty());
         EXPECT_TRUE(decoded_users.empty());
@@ -223,13 +212,10 @@ namespace chat
             {"charlie", "user_3"}
         };
 
-        auto packet  = Protocol::encode_init(messages, users);
+        auto packet  = Protocol::encode(MessageType::INIT, InitMsg{messages, users});
         auto payload = extract_payload(packet);
 
-        std::vector<Message> decoded_messages;
-        std::vector<User> decoded_users;
-
-        Protocol::decode_init(payload, decoded_messages, decoded_users);
+        auto [decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
 
         ASSERT_EQ(decoded_messages.size(), 2);
         EXPECT_EQ(decoded_messages[0].username, "alice");
@@ -250,7 +236,7 @@ namespace chat
     TEST_F(ProtocolTest, PacketSizeCorrect)
     {
         std::string text = "Test message";
-        auto packet      = Protocol::encode_message(text);
+        auto packet      = Protocol::encode(MessageType::MESSAGE, TextMsg{text});
 
         auto header  = extract_header(packet);
         auto payload = extract_payload(packet);
@@ -264,10 +250,10 @@ namespace chat
     {
         std::string empty = "";
 
-        auto packet  = Protocol::encode_message(empty);
+        auto packet  = Protocol::encode(MessageType::MESSAGE, TextMsg{empty});
         auto payload = extract_payload(packet);
 
-        std::string decoded = Protocol::decode_message(payload);
+        auto [decoded] = Protocol::decode<TextMsg>(payload);
         EXPECT_EQ(decoded, empty);
     }
 
@@ -276,10 +262,10 @@ namespace chat
     {
         std::string long_text(10000, 'a');
 
-        auto packet  = Protocol::encode_message(long_text);
+        auto packet  = Protocol::encode(MessageType::MESSAGE, TextMsg{long_text});
         auto payload = extract_payload(packet);
 
-        std::string decoded = Protocol::decode_message(payload);
+        auto [decoded] = Protocol::decode<TextMsg>(payload);
         EXPECT_EQ(decoded, long_text);
     }
 
@@ -288,10 +274,10 @@ namespace chat
     {
         std::string special = "Test|with:special\nchars\\and\ttabs";
 
-        auto packet  = Protocol::encode_message(special);
+        auto packet  = Protocol::encode(MessageType::MESSAGE, TextMsg{special});
         auto payload = extract_payload(packet);
 
-        std::string decoded = Protocol::decode_message(payload);
+        auto [decoded] = Protocol::decode<TextMsg>(payload);
         EXPECT_EQ(decoded, special);
     }
 

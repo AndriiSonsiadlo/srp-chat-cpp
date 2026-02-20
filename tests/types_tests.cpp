@@ -29,41 +29,6 @@ namespace chat
         };
     };
 
-    TEST_F(TypesTest, MessageTypeToString)
-    {
-        for (auto& [type, str] : types_)
-        {
-            std::string result = message_type_to_string(type);
-            EXPECT_EQ(result, str);
-        }
-    }
-
-    TEST_F(TypesTest, StringToMessageType)
-    {
-        for (auto& [type, str] : types_)
-        {
-            MessageType result = string_to_message_type(str);
-            EXPECT_EQ(result, type);
-        }
-    }
-
-    TEST_F(TypesTest, StringToMessageTypeInvalid)
-    {
-        EXPECT_THROW({
-                     string_to_message_type("INVALID_TYPE");
-                     }, std::runtime_error);
-    }
-
-    TEST_F(TypesTest, RoundtripConversion)
-    {
-        for (auto& type : types_ | std::views::keys)
-        {
-            std::string str            = message_type_to_string(type);
-            MessageType converted_back = string_to_message_type(str);
-            EXPECT_EQ(converted_back, type);
-        }
-    }
-
     TEST_F(TypesTest, UserStructCreation)
     {
         User user{"alice", "user_123"};
