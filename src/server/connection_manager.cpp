@@ -1,4 +1,5 @@
 #include "chat/server/connection_manager.hpp"
+
 #include <iostream>
 #include <utility>
 
@@ -32,15 +33,13 @@ namespace chat::server
         try
         {
             // read header first
-            MsgHeader header;
+            MsgHeader header{};
             boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
 
             // read payload
             std::vector<uint8_t> payload(header.size);
             if (header.size > 0)
-            {
                 boost::asio::read(socket_, boost::asio::buffer(payload));
-            }
 
             return {static_cast<MessageType>(header.type), std::move(payload)};
         }

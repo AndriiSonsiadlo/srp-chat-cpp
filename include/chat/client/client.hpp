@@ -14,6 +14,13 @@ namespace chat::client
 {
     class Client
     {
+    public:
+        Client(std::string host, int port, std::string username);
+        ~Client();
+
+        void run();
+        void stop();
+
     private:
         boost::asio::io_context io_context_;
         boost::asio::ip::tcp::socket socket_;
@@ -54,12 +61,5 @@ namespace chat::client
         void render_ui();
         void clear_screen();
         void print_banner();
-
-    public:
-        Client(std::string host, int port, std::string username);
-        ~Client();
-
-        void run();
-        void stop();
     };
 } // namespace chat::client

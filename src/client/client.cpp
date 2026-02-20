@@ -1,9 +1,11 @@
 #include "chat/client/client.hpp"
-#include "chat/common/protocol.hpp"
 #include <iostream>
 #include <iomanip>
 #include <utility>
 #include <chrono>
+
+#include "chat/common/messages.hpp"
+#include "chat/common/protocol.hpp"
 
 namespace chat::client
 {
@@ -55,6 +57,7 @@ namespace chat::client
                     }
                     else if (line == "/help")
                     {
+                        std::lock_guard<std::mutex> lock(ui_mutex_);
                         std::cout << "\nCommands:\n";
                         std::cout << "  /quit, /q  - Quit the chat\n";
                         std::cout << "  /clear     - Clear message history\n";
@@ -69,6 +72,7 @@ namespace chat::client
         }
         catch (const std::exception& e)
         {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
             std::cerr << "Error: " << e.what() << std::endl;
         }
 
@@ -88,21 +92,32 @@ namespace chat::client
 
     void Client::connect()
     {
-        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
+            std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+        }
 
         boost::asio::ip::tcp::resolver resolver(io_context_);
         const auto endpoints = resolver.resolve(host_, std::to_string(port_));
 
         boost::asio::connect(socket_, endpoints);
-
-        std::cout << "Connected! Authenticating as '" << username_ << "'..." << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
+            std::cout << "Connected! Authenticating as '" << username_ << "'..." << std::endl;
+        }
 
         // send CONNECT message
-        auto connect_packet = Protocol::encode_connect(username_);
+        auto connect_packet = Protocol::encode(MessageType::CONNECT, ConnectMsg{username_});
         send_packet(connect_packet);
 
         // wait for CONNECT_ACK
         auto [ack_type, ack_payload] = receive_packet();
+        if (ack_type == MessageType::ERROR_MSG)
+        {
+            const std::string error_msg = Protocol::decode<ErrorMsg>(ack_payload).error_msg;
+            throw std::runtime_error(error_msg);
+        }
+
         if (ack_type != MessageType::CONNECT_ACK)
         {
             throw std::runtime_error("Expected CONNECT_ACK");
@@ -118,8 +133,11 @@ namespace chat::client
         handle_init(init_payload);
 
         connected_ = true;
-        std::cout << "Successfully joined the chat!" << std::endl;
-        std::cout << "\nType /help for commands\n" << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
+            std::cout << "Successfully joined the chat!" << std::endl;
+            std::cout << "\nType /help for commands\n" << std::endl;
+        }
     }
 
     void Client::disconnect()
@@ -127,13 +145,12 @@ namespace chat::client
         if (socket_.is_open())
             try
             {
-                auto disconnect_packet = Protocol::encode_disconnect();
-                send_packet(disconnect_packet);
+                send_packet(Protocol::encode(MessageType::DISCONNECT));
                 socket_.close();
             }
             catch (...)
             {
-                // Ignore errors on disconnect
+                // ignore errors on disconnect
             }
         connected_ = false;
     }
@@ -145,8 +162,7 @@ namespace chat::client
 
         try
         {
-            auto packet = Protocol::encode_message(text);
-            send_packet(packet);
+            send_packet(Protocol::encode(MessageType::MESSAGE, TextMsg{text}));
         }
         catch (const std::exception& e)
         {
@@ -163,7 +179,7 @@ namespace chat::client
     std::pair<MessageType, std::vector<uint8_t>> Client::receive_packet()
     {
         // read header
-        MsgHeader header;
+        MsgHeader header{};
         boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
 
         // read payload
@@ -199,7 +215,10 @@ namespace chat::client
                         handle_error(payload);
                         break;
                     default:
-                        std::cerr << "Unknown message type" << std::endl;
+                        {
+                            std::lock_guard<std::mutex> lock(ui_mutex_);
+                            std::cerr << "Unknown message type" << std::endl;
+                        }
                 }
             }
         }
@@ -207,6 +226,7 @@ namespace chat::client
         {
             if (running_)
             {
+                std::lock_guard<std::mutex> lock(ui_mutex_);
                 std::cerr << "\nConnection lost: " << e.what() << std::endl;
                 connected_ = false;
             }
@@ -215,16 +235,12 @@ namespace chat::client
 
     void Client::handle_connect_ack(const std::vector<uint8_t>& payload)
     {
-        user_id_ = Protocol::decode_connect_ack(payload);
+        user_id_ = Protocol::decode<ConnectAckMsg>(payload).user_id;
     }
 
     void Client::handle_init(const std::vector<uint8_t>& payload)
     {
-        std::vector<Message> messages;
-        std::vector<User> users;
-
-        Protocol::decode_init(payload, messages, users);
-
+        auto [messages, users] = Protocol::decode<InitMsg>(payload);
         {
             std::lock_guard<std::mutex> lock(messages_mutex_);
             messages_ = std::move(messages);
@@ -238,13 +254,8 @@ namespace chat::client
 
     void Client::handle_broadcast(const std::vector<uint8_t>& payload)
     {
-        std::string username;
-        std::string text;
-        int64_t timestamp_ms;
+        auto [username, text, timestamp_ms] = Protocol::decode<BroadcastMsg>(payload);
 
-        Protocol::decode_broadcast(payload, username, text, timestamp_ms);
-
-        // convert timestamp to time_point
         auto timestamp = std::chrono::system_clock::time_point(
             std::chrono::milliseconds(timestamp_ms));
 
@@ -281,11 +292,7 @@ namespace chat::client
 
     void Client::handle_user_joined(const std::vector<uint8_t>& payload)
     {
-        std::string username;
-        std::string user_id;
-
-        Protocol::decode_user_joined(payload, username, user_id);
-
+        auto [username, user_id] = Protocol::decode<UserJoinedMsg>(payload);
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
             users_.push_back({username, user_id});
@@ -301,7 +308,7 @@ namespace chat::client
 
     void Client::handle_user_left(const std::vector<uint8_t>& payload)
     {
-        std::string username = Protocol::decode_user_left(payload);
+        std::string username = Protocol::decode<UserLeftMsg>(payload).username;
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
@@ -318,7 +325,7 @@ namespace chat::client
 
     void Client::handle_error(const std::vector<uint8_t>& payload)
     {
-        std::string error_msg = Protocol::decode_error(payload);
+        std::string error_msg = Protocol::decode<ErrorMsg>(payload).error_msg;
         std::cerr << "Error from server: " << error_msg << std::endl;
         connected_ = false;
     }
