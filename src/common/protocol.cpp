@@ -1,6 +1,5 @@
 #include "chat/common/protocol.hpp"
 
-
 namespace chat::ProtocolHelpers
 {
     std::vector<uint8_t> make_empty_packet(MessageType type)

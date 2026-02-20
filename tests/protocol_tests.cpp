@@ -32,7 +32,6 @@ namespace chat
         }
     };
 
-    // Test CONNECT encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeConnect)
     {
         std::string username = "alice";
@@ -61,7 +60,6 @@ namespace chat
         EXPECT_EQ(decoded, username);
     }
 
-    // Test CONNECT_ACK encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeConnectAck)
     {
         std::string user_id = "user_123";
@@ -76,7 +74,6 @@ namespace chat
         EXPECT_EQ(decoded, user_id);
     }
 
-    // Test MESSAGE encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeMessage)
     {
         std::string text = "Hello, world!";
@@ -102,7 +99,6 @@ namespace chat
         EXPECT_EQ(decoded, text);
     }
 
-    // Test BROADCAST encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeBroadcast)
     {
         std::string username = "alice";
@@ -122,7 +118,6 @@ namespace chat
         EXPECT_EQ(decoded_timestamp, timestamp_ms);
     }
 
-    // Test USER_JOINED encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeUserJoined)
     {
         std::string username = "bob";
@@ -141,7 +136,6 @@ namespace chat
         EXPECT_EQ(decoded_user_id, user_id);
     }
 
-    // Test USER_LEFT encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeUserLeft)
     {
         std::string username = "charlie";
@@ -156,7 +150,6 @@ namespace chat
         EXPECT_EQ(decoded, username);
     }
 
-    // Test DISCONNECT encoding
     TEST_F(ProtocolTest, EncodeDisconnect)
     {
         auto packet = Protocol::encode(MessageType::DISCONNECT);
@@ -166,7 +159,6 @@ namespace chat
         EXPECT_EQ(header.size, 0); // No payload
     }
 
-    // Test ERROR encoding/decoding
     TEST_F(ProtocolTest, EncodeDecodeError)
     {
         std::string error_msg = "Connection failed";
@@ -181,7 +173,6 @@ namespace chat
         EXPECT_EQ(decoded, error_msg);
     }
 
-    // Test INIT encoding/decoding with empty data
     TEST_F(ProtocolTest, EncodeDecodeInitEmpty)
     {
         std::vector<Message> messages;
@@ -199,7 +190,6 @@ namespace chat
         EXPECT_TRUE(decoded_users.empty());
     }
 
-    // Test INIT encoding/decoding with data
     TEST_F(ProtocolTest, EncodeDecodeInitWithData)
     {
         std::vector<Message> messages = {
@@ -232,7 +222,6 @@ namespace chat
         EXPECT_EQ(decoded_users[2].user_id, "user_3");
     }
 
-    // Test packet size correctness
     TEST_F(ProtocolTest, PacketSizeCorrect)
     {
         std::string text = "Test message";
@@ -245,7 +234,6 @@ namespace chat
         EXPECT_EQ(payload.size(), header.size);
     }
 
-    // Test empty string handling
     TEST_F(ProtocolTest, EmptyStringHandling)
     {
         std::string empty = "";
@@ -257,7 +245,6 @@ namespace chat
         EXPECT_EQ(decoded, empty);
     }
 
-    // Test long string handling
     TEST_F(ProtocolTest, LongStringHandling)
     {
         std::string long_text(10000, 'a');
@@ -269,7 +256,6 @@ namespace chat
         EXPECT_EQ(decoded, long_text);
     }
 
-    // Test special characters
     TEST_F(ProtocolTest, SpecialCharacters)
     {
         std::string special = "Test|with:special\nchars\\and\ttabs";
@@ -281,7 +267,6 @@ namespace chat
         EXPECT_EQ(decoded, special);
     }
 
-    // Test BufferWriter/Reader
     TEST_F(ProtocolTest, BufferWriterReader)
     {
         BufferWriter w;

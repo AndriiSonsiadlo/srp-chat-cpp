@@ -128,4 +128,8 @@ namespace chat
             return packet;
         }
     };
+    namespace ProtocolHelpers
+    {
+        std::vector<uint8_t> make_empty_packet(MessageType type);
+    }
 } // namespace chat
