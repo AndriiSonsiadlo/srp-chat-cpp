@@ -40,7 +40,6 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 add_library(chat_common STATIC
         src/common/buffer.cpp
         src/common/protocol.cpp
-        src/common/types.cpp
 )
 target_include_directories(chat_common PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
