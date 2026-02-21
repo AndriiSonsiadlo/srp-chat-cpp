@@ -32,16 +32,30 @@ endif()
 
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
-# common
+# Common library
 add_library(chat_common STATIC
         src/common/buffer.cpp
         src/common/protocol.cpp
         src/common/types.cpp
 )
 target_include_directories(chat_common PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+# Auth library
+add_library(chat_auth STATIC
+        src/auth/srp_utils.cpp
+        src/auth/srp_client.cpp
+        src/auth/srp_server.cpp
+)
+target_link_libraries(chat_auth
+        PUBLIC
+        OpenSSL::SSL
+        OpenSSL::Crypto
+)
+target_include_directories(chat_auth PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 # server
 add_executable(chat_server
@@ -52,6 +66,7 @@ add_executable(chat_server
 target_link_libraries(chat_server
         PRIVATE
         chat_common
+        chat_auth
         Boost::system
         Threads::Threads
 )
@@ -64,6 +79,7 @@ add_executable(chat_client
 target_link_libraries(chat_client
         PRIVATE
         chat_common
+        chat_auth
         Boost::system
         Threads::Threads
 )
