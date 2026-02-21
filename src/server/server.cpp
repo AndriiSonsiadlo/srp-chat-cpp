@@ -198,12 +198,7 @@ namespace chat::server
         // store message in history
         {
             std::lock_guard<std::mutex> lock(message_mutex_);
-            Message msg{
-                .username = username,
-                .text = text,
-                .timestamp = now
-            };
-            message_history_.push_back(std::move(msg));
+            message_history_.emplace_back(username, text, now);
 
             // keep only last 100 messages
             if (message_history_.size() > 100)
@@ -222,10 +217,8 @@ namespace chat::server
         connection_manager_->remove(user_id);
 
         if (!username.empty())
-        {
             // notify other users
             connection_manager_->broadcast(Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username}));
-        }
     }
 
     std::string Server::generate_user_id()

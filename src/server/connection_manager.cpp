@@ -135,7 +135,7 @@ namespace chat::server
 
         std::vector<User> users;
         for (const auto& [user_id, username] : user_id_to_username_)
-            users.push_back({username, user_id});
+            users.emplace_back(username, user_id);
         return users;
     }
 

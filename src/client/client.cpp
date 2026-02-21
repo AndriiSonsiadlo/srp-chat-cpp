@@ -51,8 +51,10 @@ namespace chat::client
 
                     if (line == "/clear")
                     {
-                        std::lock_guard<std::mutex> lock(messages_mutex_);
+                        std::unique_lock<std::mutex> lock(messages_mutex_);
                         messages_.clear();
+                        lock.unlock();
+
                         render_ui();
                     }
                     else if (line == "/help")
@@ -92,19 +94,17 @@ namespace chat::client
 
     void Client::connect()
     {
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
-        }
+        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
+        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+        ui_lock.unlock();
 
         boost::asio::ip::tcp::resolver resolver(io_context_);
         const auto endpoints = resolver.resolve(host_, std::to_string(port_));
-
         boost::asio::connect(socket_, endpoints);
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "Connected! Authenticating as '" << username_ << "'..." << std::endl;
-        }
+
+        ui_lock.lock();
+        std::cout << "Authenticating as '" << username_ << "'..." << std::endl;
+        ui_lock.unlock();
 
         // send CONNECT message
         auto connect_packet = Protocol::encode(MessageType::CONNECT, ConnectMsg{username_});
@@ -112,32 +112,21 @@ namespace chat::client
 
         // wait for CONNECT_ACK
         auto [ack_type, ack_payload] = receive_packet();
-        if (ack_type == MessageType::ERROR_MSG)
-        {
-            const std::string error_msg = Protocol::decode<ErrorMsg>(ack_payload).error_msg;
-            throw std::runtime_error(error_msg);
-        }
-
-        if (ack_type != MessageType::CONNECT_ACK)
-        {
+        if (ack_type != MessageType::CONNECT_ACK && ack_type != MessageType::ERROR_MSG)
             throw std::runtime_error("Expected CONNECT_ACK");
-        }
-        handle_connect_ack(ack_payload);
+        handle_packet(ack_type, ack_payload);
 
         // wait for INIT
         auto [init_type, init_payload] = receive_packet();
-        if (init_type != MessageType::INIT)
-        {
+        if (init_type != MessageType::INIT && init_type != MessageType::ERROR_MSG)
             throw std::runtime_error("Expected INIT");
-        }
-        handle_init(init_payload);
-
+        handle_packet(init_type, init_payload);
         connected_ = true;
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "Successfully joined the chat!" << std::endl;
-            std::cout << "\nType /help for commands\n" << std::endl;
-        }
+
+        ui_lock.lock();
+        std::cout << "Successfully joined the chat!" << std::endl;
+        std::cout << "\nType /help for commands\n" << std::endl;
+        ui_lock.unlock();
     }
 
     void Client::disconnect()
@@ -199,27 +188,7 @@ namespace chat::client
             while (running_ && connected_)
             {
                 auto [type, payload] = receive_packet();
-
-                switch (type)
-                {
-                    case MessageType::BROADCAST:
-                        handle_broadcast(payload);
-                        break;
-                    case MessageType::USER_JOINED:
-                        handle_user_joined(payload);
-                        break;
-                    case MessageType::USER_LEFT:
-                        handle_user_left(payload);
-                        break;
-                    case MessageType::ERROR_MSG:
-                        handle_error(payload);
-                        break;
-                    default:
-                        {
-                            std::lock_guard<std::mutex> lock(ui_mutex_);
-                            std::cerr << "Unknown message type" << std::endl;
-                        }
-                }
+                handle_packet(type, payload);
             }
         }
         catch (const std::exception& e)
@@ -233,22 +202,82 @@ namespace chat::client
         }
     }
 
-    void Client::handle_connect_ack(const std::vector<uint8_t>& payload)
+    void Client::handle_packet(MessageType type, const std::vector<uint8_t>& payload)
     {
-        user_id_ = Protocol::decode<ConnectAckMsg>(payload).user_id;
-    }
-
-    void Client::handle_init(const std::vector<uint8_t>& payload)
-    {
-        auto [messages, users] = Protocol::decode<InitMsg>(payload);
+        std::unique_lock<std::mutex> lock;
+        switch (type)
         {
-            std::lock_guard<std::mutex> lock(messages_mutex_);
-            messages_ = std::move(messages);
-        }
+            case MessageType::CONNECT_ACK:
+                {
+                    auto msg = Protocol::decode<ConnectAckMsg>(payload);
+                    user_id_ = msg.user_id;
+                    std::cout << "Connected with ID: " << user_id_ << std::endl;
+                    break;
+                }
+            case MessageType::INIT:
+                {
+                    auto msg = Protocol::decode<InitMsg>(payload);
 
-        {
-            std::lock_guard<std::mutex> lock(users_mutex_);
-            users_ = std::move(users);
+                    lock      = std::unique_lock<std::mutex>(messages_mutex_);
+                    messages_ = std::move(msg.messages);
+                    lock.unlock();
+
+                    lock   = std::unique_lock<std::mutex>(users_mutex_);
+                    users_ = std::move(msg.users);
+                    lock.unlock();
+
+                    break;
+                }
+            case MessageType::BROADCAST:
+                {
+                    handle_broadcast(payload);
+                    break;
+                }
+            case MessageType::USER_JOINED:
+                {
+                    auto msg = Protocol::decode<UserJoinedMsg>(payload);
+
+                    lock = std::unique_lock<std::mutex>(users_mutex_);
+                    users_.emplace_back(msg.username, msg.user_id);
+                    lock.unlock();
+
+                    lock = std::unique_lock<std::mutex>(ui_mutex_);
+                    std::cout << "\r" << std::string(80, ' ') << "\r";
+                    std::cout << "\033[33m*** " << msg.username << " joined the chat ***\033[0m" << std::endl;
+                    std::cout << "> " << std::flush;
+                    lock.unlock();
+
+                    break;
+                }
+            case MessageType::USER_LEFT:
+                {
+                    auto msg = Protocol::decode<UserLeftMsg>(payload);
+
+                    lock = std::unique_lock<std::mutex>(users_mutex_);
+                    std::erase_if(users_, [&msg](const User& u) { return u.username == msg.username; });
+                    lock.unlock();
+
+                    lock = std::unique_lock<std::mutex>(ui_mutex_);
+                    std::cout << "\r" << std::string(80, ' ') << "\r";
+                    std::cout << "\033[31m*** " << msg.username << " left the chat ***\033[0m" << std::endl;
+                    std::cout << "> " << std::flush;
+                    lock.unlock();
+
+                    break;
+                }
+            case MessageType::ERROR_MSG:
+                {
+                    auto msg = Protocol::decode<ErrorMsg>(payload);
+                    std::cerr << "Error from server: " << msg.error_msg << std::endl;
+                    connected_ = false;
+                    break;
+                }
+            default:
+                {
+                    lock = std::unique_lock<std::mutex>(ui_mutex_);
+                    std::cerr << "Unknown message type" << std::endl;
+                    lock.unlock();
+                }
         }
     }
 
@@ -261,15 +290,9 @@ namespace chat::client
 
         {
             std::lock_guard<std::mutex> lock(messages_mutex_);
-            Message msg{
-                .username = username,
-                .text = text,
-                .timestamp = timestamp
-            };
-            messages_.push_back(std::move(msg));
+            messages_.emplace_back(username, text, timestamp);
 
-            // keep only last 50 messages
-            if (messages_.size() > 50)
+            if (messages_.size() > 50) // keep only last 50 messages
                 messages_.erase(messages_.begin());
         }
 
@@ -290,50 +313,12 @@ namespace chat::client
         }
     }
 
-    void Client::handle_user_joined(const std::vector<uint8_t>& payload)
-    {
-        auto [username, user_id] = Protocol::decode<UserJoinedMsg>(payload);
-        {
-            std::lock_guard<std::mutex> lock(users_mutex_);
-            users_.push_back({username, user_id});
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "\r" << std::string(80, ' ') << "\r";
-            std::cout << "\033[33m*** " << username << " joined the chat ***\033[0m" << std::endl;
-            std::cout << "> " << std::flush;
-        }
-    }
-
-    void Client::handle_user_left(const std::vector<uint8_t>& payload)
-    {
-        std::string username = Protocol::decode<UserLeftMsg>(payload).username;
-
-        {
-            std::lock_guard<std::mutex> lock(users_mutex_);
-            std::erase_if(users_, [&username](const User& u) { return u.username == username; });
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "\r" << std::string(80, ' ') << "\r";
-            std::cout << "\033[31m*** " << username << " left the chat ***\033[0m" << std::endl;
-            std::cout << "> " << std::flush;
-        }
-    }
-
-    void Client::handle_error(const std::vector<uint8_t>& payload)
-    {
-        std::string error_msg = Protocol::decode<ErrorMsg>(payload).error_msg;
-        std::cerr << "Error from server: " << error_msg << std::endl;
-        connected_ = false;
-    }
-
     void Client::render_ui()
     {
+        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
         clear_screen();
         print_banner();
+        ui_lock.unlock();
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
