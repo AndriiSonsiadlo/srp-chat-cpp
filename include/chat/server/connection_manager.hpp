@@ -15,7 +15,6 @@ namespace chat::server
         using socket_type = boost::asio::ip::tcp::socket;
 
         socket_type socket_;
-        boost::asio::streambuf buffer_;
 
     public:
         explicit Connection(boost::asio::io_context& io_context);

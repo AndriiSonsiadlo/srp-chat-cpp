@@ -2,6 +2,9 @@
 
 #include <string>
 #include <vector>
+#include <stdexcept>
+
+#include <boost/asio.hpp>
 
 #include "chat/common/types.hpp"
 #include "chat/common/buffer.hpp"
@@ -45,8 +48,7 @@ namespace chat
         static void write_field(BufferWriter& w, const std::vector<T>& v)
         {
             w.write(static_cast<uint32_t>(v.size()));
-            for (const auto& item : v)
-            {
+            for (const auto& item : v) {
                 auto item_data = serialize_object(item);
                 w.write(static_cast<uint32_t>(item_data.size()));
                 w.write_bytes(item_data);
@@ -71,8 +73,7 @@ namespace chat
             std::vector<T> result;
             result.reserve(count);
 
-            for (uint32_t i = 0; i < count; ++i)
-            {
+            for (uint32_t i = 0; i < count; ++i) {
                 const auto item_size = r.read<uint32_t>();
                 std::vector<uint8_t> item_data(item_size);
                 r.read_bytes(item_data.data(), item_size);
@@ -128,8 +129,32 @@ namespace chat
             return packet;
         }
     };
+
     namespace ProtocolHelpers
     {
+        inline constexpr uint32_t kMaxPayloadSize = 1024U * 1024U; // 1 MiB
+
         std::vector<uint8_t> make_empty_packet(MessageType type);
+
+        inline void send_packet(boost::asio::ip::tcp::socket& socket, const std::vector<uint8_t>& packet)
+        {
+            boost::asio::write(socket, boost::asio::buffer(packet));
+        }
+
+        inline std::pair<MessageType, std::vector<uint8_t>> receive_packet(boost::asio::ip::tcp::socket& socket)
+        {
+            // read header first
+            MsgHeader header{};
+            boost::asio::read(socket, boost::asio::buffer(&header, sizeof(MsgHeader)));
+            if (header.size > kMaxPayloadSize)
+                throw std::runtime_error("Incoming payload exceeds maximum allowed size");
+
+            // read payload
+            std::vector<uint8_t> payload(header.size);
+            if (header.size > 0)
+                boost::asio::read(socket, boost::asio::buffer(payload));
+
+            return {static_cast<MessageType>(header.type), std::move(payload)};
+        }
     }
 } // namespace chat

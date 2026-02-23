@@ -10,6 +10,12 @@
 
 namespace chat::client
 {
+    namespace
+    {
+        constexpr size_t kMaxStoredMessages    = 50;
+        constexpr size_t kRenderedMessageCount = 20;
+    }
+
     Client::Client(std::string host, const int port, std::string username)
         : socket_(io_context_)
           , host_(std::move(host))
@@ -133,23 +139,12 @@ namespace chat::client
 
     void Client::send_packet(const std::vector<uint8_t>& packet)
     {
-        boost::asio::write(socket_, boost::asio::buffer(packet));
+        ProtocolHelpers::send_packet(socket_, packet);
     }
 
     std::pair<MessageType, std::vector<uint8_t>> Client::receive_packet()
     {
-        // read header
-        MsgHeader header{};
-        boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
-
-        // read payload
-        std::vector<uint8_t> payload(header.size);
-        if (header.size > 0)
-        {
-            boost::asio::read(socket_, boost::asio::buffer(payload));
-        }
-
-        return {static_cast<MessageType>(header.type), std::move(payload)};
+        return ProtocolHelpers::receive_packet(socket_);
     }
 
     void Client::receive_loop()
@@ -250,7 +245,7 @@ namespace chat::client
             std::lock_guard<std::mutex> lock(messages_mutex_);
             messages_.emplace_back(username, text, timestamp);
 
-            if (messages_.size() > 50) // keep only last 50 messages
+            if (messages_.size() > kMaxStoredMessages) // keep last messages
                 messages_.erase(messages_.begin());
         }
 
@@ -342,8 +337,8 @@ namespace chat::client
         auto room_salt       = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.room_salt_b64);
 
         // step 3: process challenge and send response
-        auto M                 = srp_client_->process_challenge(B, salt);
-        auto srp_response      = Protocol::encode(
+        auto M            = srp_client_->process_challenge(B, salt);
+        auto srp_response = Protocol::encode(
             MessageType::SRP_RESPONSE, SrpResponseMsg{user_id_, auth::SRPUtils::bytes_to_base64(M)}
         );
         send_packet(srp_response);

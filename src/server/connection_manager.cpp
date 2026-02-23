@@ -3,6 +3,8 @@
 #include <iostream>
 #include <utility>
 
+#include "chat/common/protocol.hpp"
+
 namespace chat::server
 {
     Connection::Connection(boost::asio::io_context& io_context)
@@ -19,7 +21,7 @@ namespace chat::server
     {
         try
         {
-            boost::asio::write(socket_, boost::asio::buffer(packet));
+            ProtocolHelpers::send_packet(socket_, packet);
         }
         catch (const std::exception& e)
         {
@@ -32,16 +34,7 @@ namespace chat::server
     {
         try
         {
-            // read header first
-            MsgHeader header{};
-            boost::asio::read(socket_, boost::asio::buffer(&header, sizeof(MsgHeader)));
-
-            // read payload
-            std::vector<uint8_t> payload(header.size);
-            if (header.size > 0)
-                boost::asio::read(socket_, boost::asio::buffer(payload));
-
-            return {static_cast<MessageType>(header.type), std::move(payload)};
+            return ProtocolHelpers::receive_packet(socket_);
         }
         catch (const std::exception&)
         {

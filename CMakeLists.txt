@@ -41,6 +41,10 @@ add_library(chat_common STATIC
         src/common/buffer.cpp
         src/common/protocol.cpp
 )
+target_link_libraries(chat_common
+        PUBLIC
+        Boost::system
+)
 target_include_directories(chat_common PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 # Auth library
