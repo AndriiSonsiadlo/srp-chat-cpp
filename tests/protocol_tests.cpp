@@ -32,48 +32,6 @@ namespace chat
         }
     };
 
-    TEST_F(ProtocolTest, EncodeDecodeConnect)
-    {
-        std::string username = "alice";
-
-        auto packet = Protocol::encode(MessageType::CONNECT, ConnectMsg{username});
-
-        auto header = extract_header(packet);
-        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT));
-        EXPECT_GT(header.size, 0);
-
-        auto payload = extract_payload(packet);
-        EXPECT_EQ(payload.size(), header.size);
-
-        auto [decoded] = Protocol::decode<ConnectMsg>(payload);
-        EXPECT_EQ(decoded, username);
-    }
-
-    TEST_F(ProtocolTest, EncodeDecodeConnectSpecialChars)
-    {
-        std::string username = "alice|bob:test";
-
-        auto packet  = Protocol::encode(MessageType::CONNECT, ConnectMsg{username});
-        auto payload = extract_payload(packet);
-
-        auto [decoded] = Protocol::decode<ConnectMsg>(payload);
-        EXPECT_EQ(decoded, username);
-    }
-
-    TEST_F(ProtocolTest, EncodeDecodeConnectAck)
-    {
-        std::string user_id = "user_123";
-
-        auto packet = Protocol::encode(MessageType::CONNECT_ACK, ConnectAckMsg{user_id});
-
-        auto header = extract_header(packet);
-        EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::CONNECT_ACK));
-
-        auto payload   = extract_payload(packet);
-        auto [decoded] = Protocol::decode<ConnectAckMsg>(payload);
-        EXPECT_EQ(decoded, user_id);
-    }
-
     TEST_F(ProtocolTest, EncodeDecodeMessage)
     {
         std::string text = "Hello, world!";

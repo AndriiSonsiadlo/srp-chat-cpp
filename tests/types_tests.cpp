@@ -15,18 +15,6 @@ namespace chat
         void TearDown() override
         {
         }
-
-        std::vector<std::pair<MessageType, std::string>> types_ = {
-            {MessageType::CONNECT, "CONNECT"},
-            {MessageType::CONNECT_ACK, "CONNECT_ACK"},
-            {MessageType::INIT, "INIT"},
-            {MessageType::MESSAGE, "MESSAGE"},
-            {MessageType::BROADCAST, "BROADCAST"},
-            {MessageType::USER_JOINED, "USER_JOINED"},
-            {MessageType::USER_LEFT, "USER_LEFT"},
-            {MessageType::DISCONNECT, "DISCONNECT"},
-            {MessageType::ERROR_MSG, "ERROR"}
-        };
     };
 
     TEST_F(TypesTest, UserStructCreation)

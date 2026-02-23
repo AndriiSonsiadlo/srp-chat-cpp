@@ -47,7 +47,6 @@ namespace chat::client
         std::mutex users_mutex_;
         std::mutex ui_mutex_;
 
-        void connect();
         void disconnect();
 
         void srp_authenticate();

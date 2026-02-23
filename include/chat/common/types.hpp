@@ -17,28 +17,23 @@ namespace chat
 
     enum class MessageType : uint16_t
     {
-        // connection (legacy - for backward compatibility)
-        CONNECT     = 0, // client connecting with username
-        CONNECT_ACK = 1, // server acknowledges connection
-
         // chat
-        INIT        = 2, // server sends initial data (messages, users)
-        MESSAGE     = 3, // client sends a message
-        BROADCAST   = 4, // server broadcasts a message
-        USER_JOINED = 5, // server notifies of new user
-        USER_LEFT   = 6, // server notifies of user leaving
-        DISCONNECT  = 7, // client disconnecting
-        ERROR_MSG   = 8, // error message
+        INIT,        // server sends initial data (messages, users)
+        MESSAGE,     // client sends a message
+        BROADCAST,   // server broadcasts a message
+        USER_JOINED, // server notifies of new user
+        USER_LEFT,   // server notifies of user leaving
+        DISCONNECT,  // client disconnecting
+        ERROR_MSG,   // error message
 
         // authentication (SRP-6a)
-        SRP_REGISTER       = 9,  // client registers new account
-        SRP_INIT           = 10, // client initiates SRP auth
-        SRP_CHALLENGE      = 11, // server sends challenge
-        SRP_RESPONSE       = 12, // client sends proof M
-        SRP_SUCCESS        = 13, // server confirms authentication
-        SRP_FAILURE        = 14, // server rejects authentication
-        SRP_USER_NOT_FOUND = 15, // server rejects authentication due to user not found
-        SRP_REGISTER_ACK   = 16, // server acknowledges registration
+        SRP_REGISTER,       // client registers new account
+        SRP_REGISTER_ACK,   // server acknowledges registration
+        SRP_INIT,           // client initiates SRP auth
+        SRP_CHALLENGE,      // server sends challenge
+        SRP_RESPONSE,       // client sends proof M
+        SRP_SUCCESS,        // server confirms authentication
+        SRP_USER_NOT_FOUND, // server rejects authentication due to user not found
     };
 
     struct User

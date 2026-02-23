@@ -100,43 +100,6 @@ namespace chat::client
         }
     }
 
-    void Client::connect()
-    {
-        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
-        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
-        ui_lock.unlock();
-
-        boost::asio::ip::tcp::resolver resolver(io_context_);
-        const auto endpoints = resolver.resolve(host_, std::to_string(port_));
-        boost::asio::connect(socket_, endpoints);
-
-        ui_lock.lock();
-        std::cout << "Authenticating as '" << username_ << "'..." << std::endl;
-        ui_lock.unlock();
-
-        // send CONNECT message
-        auto connect_packet = Protocol::encode(MessageType::CONNECT, ConnectMsg{username_});
-        send_packet(connect_packet);
-
-        // wait for CONNECT_ACK
-        auto [ack_type, ack_payload] = receive_packet();
-        if (ack_type != MessageType::CONNECT_ACK && ack_type != MessageType::ERROR_MSG)
-            throw std::runtime_error("Expected CONNECT_ACK");
-        handle_packet(ack_type, ack_payload);
-
-        // wait for INIT
-        auto [init_type, init_payload] = receive_packet();
-        if (init_type != MessageType::INIT && init_type != MessageType::ERROR_MSG)
-            throw std::runtime_error("Expected INIT");
-        handle_packet(init_type, init_payload);
-        connected_ = true;
-
-        ui_lock.lock();
-        std::cout << "Successfully joined the chat!" << std::endl;
-        std::cout << "\nType /help for commands\n" << std::endl;
-        ui_lock.unlock();
-    }
-
     void Client::disconnect()
     {
         if (socket_.is_open())
@@ -215,13 +178,6 @@ namespace chat::client
         std::unique_lock<std::mutex> lock;
         switch (type)
         {
-            case MessageType::CONNECT_ACK:
-                {
-                    auto msg = Protocol::decode<ConnectAckMsg>(payload);
-                    user_id_ = msg.user_id;
-                    std::cout << "Connected with ID: " << user_id_ << std::endl;
-                    break;
-                }
             case MessageType::INIT:
                 {
                     auto msg = Protocol::decode<InitMsg>(payload);

@@ -40,14 +40,8 @@ namespace chat::server
         std::optional<std::string> handle_srp_authentication(const std::shared_ptr<Connection>& conn);
         void handle_srp_register(const std::shared_ptr<Connection>& conn, const std::vector<uint8_t>& payload);
 
-        std::optional<std::string> handle_connect(const std::shared_ptr<Connection>& conn);
         void handle_disconnect(const std::string& user_id) const;
         void handle_client(const std::shared_ptr<Connection>& conn, const std::string& user_id);
-        void handle_message(const std::shared_ptr<Connection>& conn,
-                            const std::string& username,
-                            const std::string& message);
-
-        std::string generate_user_id();
-        std::string get_timestamp();
+        void handle_message(const std::string& username, const std::string& text);
     };
 } // namespace chat::server
