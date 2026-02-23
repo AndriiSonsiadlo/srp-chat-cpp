@@ -18,16 +18,183 @@ namespace chat::server
                   static_cast<boost::asio::ip::port_type>(port)
               )
           ),
+          srp_server_(std::make_unique<auth::SRPServer>()),
           connection_manager_(std::make_unique<ConnectionManager>()),
           next_user_id_(1),
           running_(false),
           port_(port)
     {
+        // srp_server_->load_users("users.db");
     }
 
     Server::~Server()
     {
+        // if (srp_server_)
+        //     srp_server_->save_users("users.db");
         stop();
+    }
+
+    std::optional<std::string> Server::handle_srp_authentication(const std::shared_ptr<Connection>& conn)
+    {
+        try
+        {
+            auth::SRPServer::ChallengeResponse challenge;
+            std::string username;
+
+            while (true)
+            {
+                // wait for SRP_INIT or SRP_REGISTER
+                auto [type, msg] = conn->receive_packet();
+
+                if (type == MessageType::SRP_REGISTER)
+                {
+                    handle_srp_register(conn, msg);
+                    continue;
+                }
+
+                if (type != MessageType::SRP_INIT)
+                {
+                    conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Expected SRP_INIT"}));
+                    return std::nullopt;
+                }
+
+                // parse SRP_INIT
+                auto [init_username, A_b64] = Protocol::decode<SrpInitMsg>(msg);
+                if (init_username.empty() || A_b64.empty())
+                {
+                    conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid SRP_INIT"}));
+                    return std::nullopt;
+                }
+
+                // decode A
+                auto A = auth::SRPUtils::base64_to_bytes(A_b64);
+
+                // initialize SRP authentication
+                try
+                {
+                    challenge = srp_server_->init_authentication(init_username, A);
+                    username  = std::move(init_username);
+                    break;
+                }
+                catch (const std::exception&)
+                {
+                    conn->send_packet(Protocol::encode(MessageType::SRP_USER_NOT_FOUND));
+                }
+            }
+
+            // send SRP_CHALLENGE
+            conn->send_packet(Protocol::encode(MessageType::SRP_CHALLENGE, SrpChallengeMsg{
+                                                   challenge.user_id,
+                                                   auth::SRPUtils::bytes_to_base64(challenge.B),
+                                                   auth::SRPUtils::bytes_to_base64(challenge.salt),
+                                                   auth::SRPUtils::bytes_to_base64(challenge.room_salt)
+                                               }));
+
+            // wait for SRP_RESPONSE
+            auto [response_type, response_payload] = conn->receive_packet();
+            if (response_type != MessageType::SRP_RESPONSE)
+            {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Expected SRP_RESPONSE"}));
+                return std::nullopt;
+            }
+
+            // parse SRP_RESPONSE
+            auto [response_user_id, response_M_b64] = Protocol::decode<SrpResponseMsg>(response_payload);
+            if (response_user_id != challenge.user_id)
+            {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid user_id"}));
+                return std::nullopt;
+            }
+
+            // decode M and verify
+            auto M = auth::SRPUtils::base64_to_bytes(response_M_b64);
+            auth::SRPServer::VerifyResponse verify;
+            try
+            {
+                verify = srp_server_->verify_authentication(response_user_id, M);
+            }
+            catch (const std::exception& e)
+            {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG,
+                                                   ErrorMsg{"Authentication failed: " + std::string(e.what())}));
+                return std::nullopt;
+            }
+
+            // send SRP_SUCCESS
+            conn->send_packet(Protocol::encode(
+                MessageType::SRP_SUCCESS,
+                SrpSuccessMsg{
+                    auth::SRPUtils::bytes_to_base64(verify.H_AMK),
+                    auth::SRPUtils::bytes_to_base64(verify.session_key)
+                }
+            ));
+
+            std::string user_id = response_user_id;
+            connection_manager_->add(user_id, conn);
+            connection_manager_->set_username(user_id, username);
+
+            std::cout << "User '" << username << "' (ID: " << user_id << ") authenticated successfully" << std::endl;
+
+            {
+                std::lock_guard<std::mutex> lock(message_mutex_);
+                auto users = connection_manager_->get_active_users();
+                conn->send_packet(Protocol::encode(
+                    MessageType::INIT,
+                    InitMsg{message_history_, std::move(users)}));
+            }
+
+            connection_manager_->broadcast(Protocol::encode(
+                                               MessageType::USER_JOINED,
+                                               UserJoinedMsg{username, user_id}
+                                           ), user_id); // Exclude the new user from broadcast
+
+            return user_id;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "SRP authentication error: " << e.what() << std::endl;
+            conn->send_packet(Protocol::encode(MessageType::ERROR_MSG,
+                                               ErrorMsg{"Authentication error: " + std::string(e.what())}));
+            return std::nullopt;
+        }
+    }
+
+    void Server::handle_srp_register(
+        const std::shared_ptr<Connection>& conn,
+        const std::vector<uint8_t>& payload)
+    {
+        auto [username, salt_b64, verifier_b64] = Protocol::decode<SrpRegisterMsg>(payload);
+        if (username.empty() || salt_b64.empty() || verifier_b64.empty())
+        {
+            conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid registration data"}));
+            return;
+        }
+
+        if (srp_server_->user_exists(username))
+        {
+            conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Username already exists"}));
+            return;
+        }
+
+        // decode and store credentials
+        auth::UserCredentials creds;
+        creds.username = username;
+        creds.salt     = auth::SRPUtils::base64_to_bytes(salt_b64);
+        creds.verifier = auth::SRPUtils::base64_to_bytes(verifier_b64);
+
+        if (srp_server_->register_user(username, creds))
+        {
+            std::cout << "User '" << username << "' registered successfully" << std::endl;
+
+            conn->send_packet(Protocol::encode(MessageType::SRP_REGISTER_ACK));
+
+            // Save the database immediately
+            // srp_server_->save_users("users.db");
+        }
+        else
+        {
+            conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Registration failed"}));
+        }
     }
 
     void Server::run()
@@ -63,7 +230,8 @@ namespace chat::server
                 // handle client in a separate thread
                 std::thread([this, conn]()
                 {
-                    const auto user_id = this->handle_connect(conn);
+                    // const auto user_id = this->handle_connect(conn);
+                    const auto user_id = this->handle_srp_authentication(conn);
                     if (user_id.has_value())
                         this->handle_client(conn, user_id.value());
                 }).detach();

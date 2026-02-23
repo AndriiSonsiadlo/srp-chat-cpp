@@ -5,6 +5,7 @@
 #include <vector>
 #include <boost/asio.hpp>
 
+#include "chat/auth/srp_server.hpp"
 #include "chat/common/types.hpp"
 #include "chat/server/connection_manager.hpp"
 
@@ -23,6 +24,7 @@ namespace chat::server
         boost::asio::io_context io_context_;
         boost::asio::ip::tcp::acceptor acceptor_;
 
+        std::unique_ptr<auth::SRPServer> srp_server_;
         std::unique_ptr<ConnectionManager> connection_manager_;
 
         std::vector<Message> message_history_;
@@ -34,6 +36,9 @@ namespace chat::server
         int port_;
 
         void start_accept();
+
+        std::optional<std::string> handle_srp_authentication(const std::shared_ptr<Connection>& conn);
+        void handle_srp_register(const std::shared_ptr<Connection>& conn, const std::vector<uint8_t>& payload);
 
         std::optional<std::string> handle_connect(const std::shared_ptr<Connection>& conn);
         void handle_disconnect(const std::string& user_id) const;

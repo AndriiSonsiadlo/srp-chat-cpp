@@ -1,4 +1,5 @@
 #include "chat/client/client.hpp"
+
 #include <iostream>
 #include <iomanip>
 #include <utility>
@@ -28,7 +29,14 @@ namespace chat::client
     {
         try
         {
-            connect();
+            std::cout << "Password: ";
+            std::getline(std::cin, password_);
+
+            // create SRP client
+            srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
+
+            // try to authenticate, offer registration if user doesn't exist
+            srp_authenticate();
 
             // start receive thread
             running_        = true;
@@ -311,6 +319,177 @@ namespace chat::client
 
             std::cout << "> " << std::flush;
         }
+    }
+
+    void Client::srp_authenticate()
+    {
+        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
+        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+        ui_lock.unlock();
+
+        boost::asio::ip::tcp::resolver resolver(io_context_);
+        auto endpoints = resolver.resolve(host_, std::to_string(port_));
+        boost::asio::connect(socket_, endpoints);
+
+        ui_lock.lock();
+        std::cout << "Authenticating..." << std::endl;
+        ui_lock.unlock();
+
+        // step 1: generate A and send SRP_INIT
+        auto A = srp_client_->generate_A();
+        send_packet(Protocol::encode(MessageType::SRP_INIT, SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A)}));
+
+        // step 2: receive response (could be SRP_CHALLENGE, SRP_USER_NOT_FOUND, or ERROR_MSG)
+        auto [type, payload] = receive_packet();
+
+        if (type == MessageType::SRP_USER_NOT_FOUND)
+        {
+            ui_lock.lock();
+            std::cout << "User not found. Register? (y/n): ";
+            ui_lock.unlock();
+
+            std::string response;
+            std::getline(std::cin, response);
+            if (response == "y" || response == "Y")
+            {
+                // Register and then retry authentication
+                srp_register();
+
+                ui_lock.lock();
+                std::cout << "Registration complete! Now authenticating..." << std::endl;
+                ui_lock.unlock();
+
+                // CRITICAL FIX: After registration, send SRP_INIT again
+                auto A_retry = srp_client_->generate_A();
+                send_packet(Protocol::encode(MessageType::SRP_INIT,
+                                             SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A_retry)}));
+
+                // Receive the challenge
+                auto retry_packet = receive_packet();
+                type              = retry_packet.first;
+                payload           = retry_packet.second;
+            }
+            else
+            {
+                throw std::runtime_error("Authentication cancelled");
+            }
+        }
+
+        if (type == MessageType::ERROR_MSG)
+        {
+            auto msg = Protocol::decode<ErrorMsg>(payload);
+            throw std::runtime_error("Authentication error: " + msg.error_msg);
+        }
+
+        if (type != MessageType::SRP_CHALLENGE)
+            throw std::runtime_error(
+                "Expected SRP_CHALLENGE, got message type " + std::to_string(static_cast<int>(type)));
+
+        auto srpChallengeMsg = Protocol::decode<SrpChallengeMsg>(payload);
+        user_id_             = srpChallengeMsg.user_id;
+        auto B               = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.B_b64);
+        auto salt            = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.salt_b64);
+        auto room_salt       = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.room_salt_b64);
+
+        // step 3: process challenge and send response
+        auto M            = srp_client_->process_challenge(B, salt);
+        auto srp_response = Protocol::encode(
+            MessageType::SRP_RESPONSE, SrpResponseMsg{user_id_, auth::SRPUtils::bytes_to_base64(M)}
+        );
+        send_packet(srp_response);
+
+        // step 4: receive SRP_SUCCESS
+        auto [success_type, success_payload] = receive_packet();
+
+        if (success_type == MessageType::ERROR_MSG)
+        {
+            auto msg = Protocol::decode<ErrorMsg>(success_payload);
+            throw std::runtime_error("Authentication failed: " + msg.error_msg);
+        }
+
+        if (success_type != MessageType::SRP_SUCCESS)
+            throw std::runtime_error("Expected SRP_SUCCESS");
+
+        auto srpSuccessMsg = Protocol::decode<SrpSuccessMsg>(success_payload);
+        auto H_AMK         = auth::SRPUtils::base64_to_bytes(srpSuccessMsg.H_AMK_b64);
+
+        // verify server
+        if (!srp_client_->verify_server(H_AMK))
+        {
+            throw std::runtime_error("Server verification failed");
+        }
+
+        // store room key for message encryption
+        room_key_ = auth::SRPUtils::hash_sha256(room_salt); // derive from room_salt
+
+        // step 5: receive INIT to get messages and users
+        auto [init_type, init_payload] = receive_packet();
+
+        if (init_type == MessageType::ERROR_MSG)
+        {
+            auto msg = Protocol::decode<ErrorMsg>(init_payload);
+            throw std::runtime_error("Init error: " + msg.error_msg);
+        }
+
+        if (init_type != MessageType::INIT)
+            throw std::runtime_error("Expected INIT");
+
+        handle_packet(init_type, init_payload);
+        connected_ = true;
+
+        ui_lock.lock();
+        std::cout << "Authentication successful! Joined the chat" << std::endl;
+        std::cout << "\nType /help for commands\n" << std::endl;
+        ui_lock.unlock();
+    }
+
+    void Client::srp_register()
+    {
+        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
+        std::cout << "Registering new user '" << username_ << "'..." << std::endl;
+        ui_lock.unlock();
+
+        // get password confirmation
+        ui_lock.lock();
+        std::cout << "Confirm password: ";
+        ui_lock.unlock();
+        std::string password_confirm;
+        std::getline(std::cin, password_confirm);
+
+        if (password_confirm != password_)
+        {
+            throw std::runtime_error("Passwords do not match");
+        }
+
+        // generate credentials
+        auto creds = auth::SRPClient::register_user(username_, password_confirm);
+
+        // send SRP_REGISTER
+        auto srp_register = Protocol::encode(
+            MessageType::SRP_REGISTER,
+            SrpRegisterMsg{
+                .username = username_,
+                .salt_b64 = auth::SRPUtils::bytes_to_base64(creds.salt),
+                .verifier_b64 = auth::SRPUtils::bytes_to_base64(creds.verifier)
+            }
+        );
+        send_packet(srp_register);
+
+        // wait for response
+        auto [type, payload] = receive_packet();
+
+        if (type == MessageType::ERROR_MSG)
+        {
+            auto msg = Protocol::decode<ErrorMsg>(payload);
+            throw std::runtime_error("Registration failed: " + msg.error_msg);
+        }
+
+        if (type != MessageType::SRP_REGISTER_ACK)
+            throw std::runtime_error("Expected SRP_REGISTER_ACK");
+
+        ui_lock.lock();
+        std::cout << "Registration successful!" << std::endl;
+        ui_lock.unlock();
     }
 
     void Client::render_ui()

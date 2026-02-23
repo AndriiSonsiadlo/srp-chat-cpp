@@ -131,14 +131,15 @@ namespace chat::auth
         session.B = B.to_bytes();
 
         // store session
+        std::string user_id = session.user_id;
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
             sessions_[session.user_id] = std::move(session);
         }
 
         return ChallengeResponse{
-            .user_id = session.user_id,
-            .B = sessions_[session.user_id].B,
+            .user_id = user_id,
+            .B = sessions_[user_id].B,
             .salt = creds.salt,
             .room_salt = room_salt_
         };

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <boost/asio.hpp>
 
+#include "chat/auth/srp_client.hpp"
 #include "chat/common/types.hpp"
 
 namespace chat::client
@@ -25,9 +26,13 @@ namespace chat::client
         boost::asio::io_context io_context_;
         boost::asio::ip::tcp::socket socket_;
 
+        std::unique_ptr<auth::SRPClient> srp_client_;
+        std::vector<uint8_t> room_key_;
+
         std::string host_;
         int port_;
         std::string username_;
+        std::string password_;
         std::string user_id_;
 
         std::atomic<bool> running_;
@@ -44,6 +49,9 @@ namespace chat::client
 
         void connect();
         void disconnect();
+
+        void srp_authenticate();
+        void srp_register();
 
         void send_message(const std::string& text);
         void receive_loop();
