@@ -10,6 +10,11 @@
 
 namespace chat::server
 {
+    namespace
+    {
+        constexpr size_t kMaxMessageHistory = 100;
+    }
+
     Server::Server(const int port)
         : acceptor_(
               io_context_,
@@ -24,13 +29,13 @@ namespace chat::server
           running_(false),
           port_(port)
     {
-        // srp_server_->load_users("users.db");
+        srp_server_->load_users("users.db");
     }
 
     Server::~Server()
     {
-        // if (srp_server_)
-        //     srp_server_->save_users("users.db");
+        if (srp_server_)
+            srp_server_->save_users("users.db");
         stop();
     }
 
@@ -188,8 +193,8 @@ namespace chat::server
 
             conn->send_packet(Protocol::encode(MessageType::SRP_REGISTER_ACK));
 
-            // Save the database immediately
-            // srp_server_->save_users("users.db");
+            // save the database immediately
+            srp_server_->save_users("users.db");
         }
         else
         {
@@ -254,17 +259,19 @@ namespace chat::server
             // message loop
             while (conn->is_open() && running_)
             {
-                auto [type, payload] = conn->receive_packet();
-
-                if (type == MessageType::MESSAGE)
+                switch (auto [type, payload] = conn->receive_packet(); type)
                 {
-                    const auto& [text] = Protocol::decode<TextMsg>(payload);
-                    handle_message(conn, username, text);
+                    case MessageType::MESSAGE: {
+                        const auto& [text] = Protocol::decode<TextMsg>(payload);
+                        handle_message(username, text);
+                        break;
+                    }
+                    case MessageType::DISCONNECT:
+                        break;
+                    default:
+                        std::cerr << "Unknown message type from " << username << std::endl;
+                        break;
                 }
-                else if (type == MessageType::DISCONNECT)
-                    break;
-                else
-                    std::cerr << "Unknown message type from " << username << std::endl;
             }
         }
         catch (const std::exception& e)
@@ -301,8 +308,8 @@ namespace chat::server
             std::lock_guard<std::mutex> lock(message_mutex_);
             message_history_.emplace_back(username, text, now);
 
-            // keep only last 100 messages
-            if (message_history_.size() > 100)
+            // keep only last kMaxMessageHistory messages
+            if (message_history_.size() > kMaxMessageHistory)
                 message_history_.erase(message_history_.begin());
         }
 

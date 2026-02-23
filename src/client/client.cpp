@@ -178,70 +178,64 @@ namespace chat::client
         std::unique_lock<std::mutex> lock;
         switch (type)
         {
-            case MessageType::INIT:
-                {
-                    auto msg = Protocol::decode<InitMsg>(payload);
+            case MessageType::INIT: {
+                auto msg = Protocol::decode<InitMsg>(payload);
 
-                    lock      = std::unique_lock<std::mutex>(messages_mutex_);
-                    messages_ = std::move(msg.messages);
-                    lock.unlock();
+                lock      = std::unique_lock<std::mutex>(messages_mutex_);
+                messages_ = std::move(msg.messages);
+                lock.unlock();
 
-                    lock   = std::unique_lock<std::mutex>(users_mutex_);
-                    users_ = std::move(msg.users);
-                    lock.unlock();
+                lock   = std::unique_lock<std::mutex>(users_mutex_);
+                users_ = std::move(msg.users);
+                lock.unlock();
 
-                    break;
-                }
-            case MessageType::BROADCAST:
-                {
-                    handle_broadcast(payload);
-                    break;
-                }
-            case MessageType::USER_JOINED:
-                {
-                    auto msg = Protocol::decode<UserJoinedMsg>(payload);
+                break;
+            }
+            case MessageType::BROADCAST: {
+                handle_broadcast(payload);
+                break;
+            }
+            case MessageType::USER_JOINED: {
+                auto msg = Protocol::decode<UserJoinedMsg>(payload);
 
-                    lock = std::unique_lock<std::mutex>(users_mutex_);
-                    users_.emplace_back(msg.username, msg.user_id);
-                    lock.unlock();
+                lock = std::unique_lock<std::mutex>(users_mutex_);
+                users_.emplace_back(msg.username, msg.user_id);
+                lock.unlock();
 
-                    lock = std::unique_lock<std::mutex>(ui_mutex_);
-                    std::cout << "\r" << std::string(80, ' ') << "\r";
-                    std::cout << "\033[33m*** " << msg.username << " joined the chat ***\033[0m" << std::endl;
-                    std::cout << "> " << std::flush;
-                    lock.unlock();
+                lock = std::unique_lock<std::mutex>(ui_mutex_);
+                std::cout << "\r" << std::string(80, ' ') << "\r";
+                std::cout << "\033[33m*** " << msg.username << " joined the chat ***\033[0m" << std::endl;
+                std::cout << "> " << std::flush;
+                lock.unlock();
 
-                    break;
-                }
-            case MessageType::USER_LEFT:
-                {
-                    auto msg = Protocol::decode<UserLeftMsg>(payload);
+                break;
+            }
+            case MessageType::USER_LEFT: {
+                auto msg = Protocol::decode<UserLeftMsg>(payload);
 
-                    lock = std::unique_lock<std::mutex>(users_mutex_);
-                    std::erase_if(users_, [&msg](const User& u) { return u.username == msg.username; });
-                    lock.unlock();
+                lock = std::unique_lock<std::mutex>(users_mutex_);
+                std::erase_if(users_, [&msg](const User& u) { return u.username == msg.username; });
+                lock.unlock();
 
-                    lock = std::unique_lock<std::mutex>(ui_mutex_);
-                    std::cout << "\r" << std::string(80, ' ') << "\r";
-                    std::cout << "\033[31m*** " << msg.username << " left the chat ***\033[0m" << std::endl;
-                    std::cout << "> " << std::flush;
-                    lock.unlock();
+                lock = std::unique_lock<std::mutex>(ui_mutex_);
+                std::cout << "\r" << std::string(80, ' ') << "\r";
+                std::cout << "\033[31m*** " << msg.username << " left the chat ***\033[0m" << std::endl;
+                std::cout << "> " << std::flush;
+                lock.unlock();
 
-                    break;
-                }
-            case MessageType::ERROR_MSG:
-                {
-                    auto msg = Protocol::decode<ErrorMsg>(payload);
-                    std::cerr << "Error from server: " << msg.error_msg << std::endl;
-                    connected_ = false;
-                    break;
-                }
-            default:
-                {
-                    lock = std::unique_lock<std::mutex>(ui_mutex_);
-                    std::cerr << "Unknown message type" << std::endl;
-                    lock.unlock();
-                }
+                break;
+            }
+            case MessageType::ERROR_MSG: {
+                auto msg = Protocol::decode<ErrorMsg>(payload);
+                std::cerr << "Error from server: " << msg.error_msg << std::endl;
+                connected_ = false;
+                break;
+            }
+            default: {
+                lock = std::unique_lock<std::mutex>(ui_mutex_);
+                std::cerr << "Unknown message type" << std::endl;
+                lock.unlock();
+            }
         }
     }
 
@@ -312,13 +306,13 @@ namespace chat::client
                 srp_register();
 
                 ui_lock.lock();
-                std::cout << "Registration complete! Now authenticating..." << std::endl;
+                std::cout << "Authenticating..." << std::endl;
                 ui_lock.unlock();
 
-                // CRITICAL FIX: After registration, send SRP_INIT again
                 auto A_retry = srp_client_->generate_A();
-                send_packet(Protocol::encode(MessageType::SRP_INIT,
-                                             SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A_retry)}));
+                send_packet(Protocol::encode(
+                    MessageType::SRP_INIT, SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A_retry)}
+                ));
 
                 // Receive the challenge
                 auto retry_packet = receive_packet();
@@ -348,8 +342,8 @@ namespace chat::client
         auto room_salt       = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.room_salt_b64);
 
         // step 3: process challenge and send response
-        auto M            = srp_client_->process_challenge(B, salt);
-        auto srp_response = Protocol::encode(
+        auto M                 = srp_client_->process_challenge(B, salt);
+        auto srp_response      = Protocol::encode(
             MessageType::SRP_RESPONSE, SrpResponseMsg{user_id_, auth::SRPUtils::bytes_to_base64(M)}
         );
         send_packet(srp_response);
@@ -407,18 +401,12 @@ namespace chat::client
 
         // get password confirmation
         ui_lock.lock();
-        std::cout << "Confirm password: ";
+        std::cout << "Enter password: ";
         ui_lock.unlock();
-        std::string password_confirm;
-        std::getline(std::cin, password_confirm);
-
-        if (password_confirm != password_)
-        {
-            throw std::runtime_error("Passwords do not match");
-        }
+        std::getline(std::cin, password_);
 
         // generate credentials
-        auto creds = auth::SRPClient::register_user(username_, password_confirm);
+        auto creds = auth::SRPClient::register_user(username_, password_);
 
         // send SRP_REGISTER
         auto srp_register = Protocol::encode(
