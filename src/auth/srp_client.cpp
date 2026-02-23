@@ -6,9 +6,9 @@
 
 namespace chat::auth
 {
-    SRPClient::SRPClient(std::string username, std::string password)
+    SRPClient::SRPClient(std::string username, std::string* password)
         : username_(std::move(username))
-          , password_(std::move(password))
+          , password_(password)
     {
         // initialize SRP parameters
         N_ = std::make_unique<SRPUtils::BigNum>(SRP_N_HEX_2048);
@@ -52,7 +52,7 @@ namespace chat::auth
         auto u = SRPUtils::calculate_u(*A_, *B_);
 
         // calculate x = H(salt, H(username, ":", password))
-        auto x = SRPUtils::calculate_x(salt_, username_, password_);
+        auto x = SRPUtils::calculate_x(salt_, username_, *password_);
 
         // calculate S = (B - kg^x)^(a + ux) mod N
         auto S = SRPUtils::calculate_S_client(*N_, *B_, *k_, *g_, x, *a_, u);

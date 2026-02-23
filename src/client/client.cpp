@@ -35,11 +35,8 @@ namespace chat::client
     {
         try
         {
-            std::cout << "Password: ";
-            std::getline(std::cin, password_);
-
             // create SRP client
-            srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
+            srp_client_ = std::make_unique<auth::SRPClient>(username_, &password_);
 
             // try to authenticate, offer registration if user doesn't exist
             srp_authenticate();
@@ -330,6 +327,9 @@ namespace chat::client
             throw std::runtime_error(
                 "Expected SRP_CHALLENGE, got message type " + std::to_string(static_cast<int>(type)));
 
+        std::cout << "Enter password: ";
+        std::getline(std::cin, password_);
+
         auto srpChallengeMsg = Protocol::decode<SrpChallengeMsg>(payload);
         user_id_             = srpChallengeMsg.user_id;
         auto B               = auth::SRPUtils::base64_to_bytes(srpChallengeMsg.B_b64);
@@ -454,7 +454,7 @@ namespace chat::client
         {
             std::lock_guard<std::mutex> lock(messages_mutex_);
 
-            size_t start = messages_.size() > 20 ? messages_.size() - 20 : 0;
+            size_t start = messages_.size() > kRenderedMessageCount ? messages_.size() - kRenderedMessageCount : 0;
             for (size_t i = start; i < messages_.size(); ++i)
             {
                 auto& msg   = messages_[i];

@@ -17,7 +17,7 @@ namespace chat::auth
     {
     private:
         std::string username_;
-        std::string password_;
+        std::string* password_;
 
         // SRP parameters
         std::unique_ptr<SRPUtils::BigNum> N_; // safe prime
@@ -41,7 +41,7 @@ namespace chat::auth
         bool authenticated_{false};
 
     public:
-        SRPClient(std::string username, std::string password);
+        SRPClient(std::string username, std::string *password);
         ~SRPClient();
 
         // step 1: generate client's public ephemeral value A
