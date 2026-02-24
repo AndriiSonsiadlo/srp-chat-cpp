@@ -291,10 +291,6 @@ namespace chat::client
         auto endpoints = resolver.resolve(host_, std::to_string(port_));
         boost::asio::connect(socket_, endpoints);
 
-        ui_lock.lock();
-        std::cout << "Authenticating..." << std::endl;
-        ui_lock.unlock();
-
         // step 1: generate A and send SRP_INIT
         auto A = srp_client_->generate_A();
         send_packet(Protocol::encode(MessageType::SRP_INIT, SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A)}));
@@ -315,9 +311,6 @@ namespace chat::client
                 // Register and then retry authentication
                 srp_register();
 
-                ui_lock.lock();
-                std::cout << "Authenticating..." << std::endl;
-                ui_lock.unlock();
 
                 auto A_retry = srp_client_->generate_A();
                 send_packet(Protocol::encode(
@@ -345,6 +338,10 @@ namespace chat::client
             throw std::runtime_error(
                 "Expected SRP_CHALLENGE, got message type " + std::to_string(static_cast<int>(type)));
 
+
+        ui_lock.lock();
+        std::cout << "Authenticating..." << std::endl;
+        ui_lock.unlock();
         std::cout << "Enter password: ";
         std::getline(std::cin, password_);
 

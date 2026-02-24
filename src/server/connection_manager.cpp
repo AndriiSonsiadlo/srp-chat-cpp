@@ -19,12 +19,10 @@ namespace chat::server
 
     void Connection::send_packet(const std::vector<uint8_t>& packet)
     {
-        try
-        {
+        try {
             ProtocolHelpers::send_packet(socket_, packet);
         }
-        catch (const std::exception& e)
-        {
+        catch (const std::exception& e) {
             std::cerr << "Error sending packet: " << e.what() << std::endl;
             throw;
         }
@@ -32,24 +30,20 @@ namespace chat::server
 
     std::pair<MessageType, std::vector<uint8_t>> Connection::receive_packet()
     {
-        try
-        {
+        try {
             return ProtocolHelpers::receive_packet(socket_);
         }
-        catch (const std::exception&)
-        {
+        catch (const std::exception&) {
             throw std::runtime_error("Connection closed");
         }
     }
 
     void Connection::close()
     {
-        try
-        {
+        try {
             socket_.close();
         }
-        catch (...)
-        {
+        catch (...) {
             // ignore errors on close
         }
     }
@@ -59,15 +53,11 @@ namespace chat::server
         return socket_.is_open();
     }
 
-    void ConnectionManager::add(const std::string& user_id, std::shared_ptr<Connection> conn)
+    void ConnectionManager::add(const std::string& user_id, const std::string& username,
+                                std::shared_ptr<Connection> conn)
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        connections_[user_id] = std::move(conn);
-    }
-
-    void ConnectionManager::set_username(const std::string& user_id, const std::string& username)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
+        connections_[user_id]         = std::move(conn);
         user_id_to_username_[user_id] = username;
     }
 
@@ -75,13 +65,10 @@ namespace chat::server
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        auto it = user_id_to_username_.find(user_id);
-        if (it != user_id_to_username_.end())
+        if (const auto it = user_id_to_username_.find(user_id); it != user_id_to_username_.end())
             user_id_to_username_.erase(it);
 
-        auto conn_it = connections_.find(user_id);
-        if (conn_it != connections_.end())
-        {
+        if (const auto conn_it = connections_.find(user_id); conn_it != connections_.end()) {
             conn_it->second->close();
             connections_.erase(conn_it);
         }
@@ -93,12 +80,10 @@ namespace chat::server
 
         for (auto& [user_id, conn] : connections_)
             if (user_id != exclude_user && conn->is_open())
-                try
-                {
+                try {
                     conn->send_packet(packet);
                 }
-                catch (const std::exception& e)
-                {
+                catch (const std::exception& e) {
                     std::cerr << "Error broadcasting to " << user_id << ": " << e.what() << std::endl;
                 }
     }
@@ -109,13 +94,11 @@ namespace chat::server
 
         auto it = connections_.find(user_id);
         if (it != connections_.end() && it->second->is_open())
-            try
-            {
+            try {
                 it->second->send_packet(packet);
                 return true;
             }
-            catch (const std::exception& e)
-            {
+            catch (const std::exception& e) {
                 std::cerr << "Error sending to " << user_id << ": " << e.what() << std::endl;
                 return false;
             }
@@ -136,26 +119,17 @@ namespace chat::server
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        return std::any_of(user_id_to_username_.begin(), user_id_to_username_.end(), [&](const auto& pair)
-        {
-            return pair.second == username;
-        });
-    }
-
-    std::string ConnectionManager::get_user_id_by_username(const std::string& username) const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        for (const auto& [user_id, uname] : user_id_to_username_)
-            if (uname == username)
-                return user_id;
-        return "";
+        return std::ranges::any_of(
+            user_id_to_username_,
+            [&](const auto& pair) {
+                return pair.second == username;
+            });
     }
 
     std::string ConnectionManager::get_username_by_user_id(const std::string& user_id) const
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (auto it = user_id_to_username_.find(user_id); it != user_id_to_username_.end())
+        if (const auto it = user_id_to_username_.find(user_id); it != user_id_to_username_.end())
             return it->second;
         return "";
     }
