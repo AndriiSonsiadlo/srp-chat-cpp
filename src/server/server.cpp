@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 
+#include "chat/crypto/aes_engine.hpp"
 #include "chat/common/messages.hpp"
 #include "chat/common/protocol.hpp"
 
@@ -135,8 +136,20 @@ namespace chat::server
             ));
 
             std::string user_id = response_user_id;
+            auto session_key    = auth::SRPUtils::base64_to_bytes(
+                std::string(verify.session_key.begin(), verify.session_key.end()));
+            if (session_key.size() != crypto::AESEngine::KEY_SIZE)
+            {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid session key size"}));
+                return std::nullopt;
+            }
+
             connection_manager_->add(user_id, conn);
             connection_manager_->set_username(user_id, username);
+            {
+                std::lock_guard<std::mutex> lock(user_keys_mutex_);
+                user_keys_[user_id] = std::move(session_key);
+            }
 
             std::cout << "User '" << username << "' (ID: " << user_id << ") authenticated successfully" << std::endl;
 
@@ -262,11 +275,28 @@ namespace chat::server
                 switch (auto [type, payload] = conn->receive_packet(); type)
                 {
                     case MessageType::MESSAGE: {
-                        const auto& [text] = Protocol::decode<TextMsg>(payload);
+                        const auto& [ciphertext_b64] = Protocol::decode<TextMsg>(payload);
+
+                        std::vector<uint8_t> key;
+                        {
+                            std::lock_guard<std::mutex> lock(user_keys_mutex_);
+                            if (const auto it = user_keys_.find(user_id); it != user_keys_.end())
+                                key = it->second;
+                        }
+
+                        if (key.empty())
+                        {
+                            conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Missing session key"}));
+                            break;
+                        }
+
+                        const auto encrypted = auth::SRPUtils::base64_to_bytes(ciphertext_b64);
+                        const auto text      = crypto::AESEngine::decrypt_string(encrypted, key);
                         handle_message(username, text);
                         break;
                     }
                     case MessageType::DISCONNECT:
+                        conn->close();
                         break;
                     default:
                         std::cerr << "Unknown message type from " << username << std::endl;
@@ -313,15 +343,49 @@ namespace chat::server
                 message_history_.erase(message_history_.begin());
         }
 
-        // broadcast to all users
-        connection_manager_->broadcast(Protocol::encode(MessageType::BROADCAST,
-                                                        BroadcastMsg{username, text, timestamp_ms}));
+        // encrypt and broadcast to each active user with their session key
+        for (const auto& user : connection_manager_->get_active_users())
+        {
+            std::vector<uint8_t> key;
+            {
+                std::lock_guard<std::mutex> lock(user_keys_mutex_);
+                if (const auto it = user_keys_.find(user.user_id); it != user_keys_.end())
+                    key = it->second;
+            }
+
+            if (key.empty())
+                continue;
+
+            try
+            {
+                const auto encrypted = crypto::AESEngine::encrypt_string(text, key);
+                connection_manager_->send_to(
+                    user.user_id,
+                    Protocol::encode(
+                        MessageType::BROADCAST,
+                        BroadcastMsg{
+                            username,
+                            auth::SRPUtils::bytes_to_base64(encrypted),
+                            timestamp_ms
+                        }
+                    )
+                );
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Encryption/broadcast error for " << user.user_id << ": " << e.what() << std::endl;
+            }
+        }
     }
 
-    void Server::handle_disconnect(const std::string& user_id) const
+    void Server::handle_disconnect(const std::string& user_id)
     {
         // get username before removing
         const std::string username = connection_manager_->get_username_by_user_id(user_id);
+        {
+            std::lock_guard<std::mutex> lock(user_keys_mutex_);
+            user_keys_.erase(user_id);
+        }
         connection_manager_->remove(user_id);
 
         if (!username.empty())

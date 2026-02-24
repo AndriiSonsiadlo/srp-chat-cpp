@@ -3,6 +3,7 @@
 #include <memory>
 #include <atomic>
 #include <vector>
+#include <unordered_map>
 #include <boost/asio.hpp>
 
 #include "chat/auth/srp_server.hpp"
@@ -29,6 +30,8 @@ namespace chat::server
 
         std::vector<Message> message_history_;
         std::mutex message_mutex_;
+        std::unordered_map<std::string, std::vector<uint8_t>> user_keys_;
+        std::mutex user_keys_mutex_;
 
         std::atomic<int> next_user_id_;
         std::atomic<bool> running_;
@@ -40,7 +43,7 @@ namespace chat::server
         std::optional<std::string> handle_srp_authentication(const std::shared_ptr<Connection>& conn);
         void handle_srp_register(const std::shared_ptr<Connection>& conn, const std::vector<uint8_t>& payload);
 
-        void handle_disconnect(const std::string& user_id) const;
+        void handle_disconnect(const std::string& user_id);
         void handle_client(const std::shared_ptr<Connection>& conn, const std::string& user_id);
         void handle_message(const std::string& username, const std::string& text);
     };

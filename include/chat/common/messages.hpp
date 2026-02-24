@@ -34,20 +34,22 @@ namespace chat
 
     struct TextMsg
     {
-        std::string text;
+        // Base64-encoded AES-GCM payload (IV || ciphertext || tag).
+        std::string ciphertext_b64;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(text); }
-        [[nodiscard]] auto as_tuple() { return std::tie(text); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(ciphertext_b64); }
+        [[nodiscard]] auto as_tuple() { return std::tie(ciphertext_b64); }
     };
 
     struct BroadcastMsg
     {
         std::string username;
-        std::string text;
+        // Base64-encoded AES-GCM payload (IV || ciphertext || tag).
+        std::string ciphertext_b64;
         int64_t timestamp_ms;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(username, text, timestamp_ms); }
-        [[nodiscard]] auto as_tuple() { return std::tie(username, text, timestamp_ms); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(username, ciphertext_b64, timestamp_ms); }
+        [[nodiscard]] auto as_tuple() { return std::tie(username, ciphertext_b64, timestamp_ms); }
     };
 
     struct UserJoinedMsg

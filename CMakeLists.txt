@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.0.0)
-project(CPPTerminalChat VERSION 0.1.0)
+project(SRPChat VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,7 +60,19 @@ target_link_libraries(chat_auth
 )
 target_include_directories(chat_auth PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-# server
+# Crypto library
+add_library(chat_crypto STATIC
+        src/crypto/aes_engine.cpp
+)
+target_link_libraries(chat_crypto
+        PUBLIC
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        chat_auth
+)
+target_include_directories(chat_crypto PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+# Server executable
 add_executable(chat_server
         src/server/main.cpp
         src/server/server.cpp
@@ -70,11 +82,12 @@ target_link_libraries(chat_server
         PRIVATE
         chat_common
         chat_auth
+        chat_crypto
         Boost::system
         Threads::Threads
 )
 
-# client
+# Client executable
 add_executable(chat_client
         src/client/main.cpp
         src/client/client.cpp
@@ -83,6 +96,7 @@ target_link_libraries(chat_client
         PRIVATE
         chat_common
         chat_auth
+        chat_crypto
         Boost::system
         Threads::Threads
 )
@@ -126,10 +140,20 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(aes_tests
+            tests/aes_tests.cpp
+    )
+    target_link_libraries(aes_tests
+            PRIVATE
+            chat_crypto
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
+    gtest_discover_tests(aes_tests)
+    gtest_discover_tests(connection_manager_tests)
     gtest_discover_tests(protocol_tests)
     gtest_discover_tests(types_tests)
-    gtest_discover_tests(connection_manager_tests)
 endif()
 
 install(TARGETS chat_server chat_client

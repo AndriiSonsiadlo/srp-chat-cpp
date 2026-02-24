@@ -5,6 +5,7 @@
 #include <utility>
 #include <chrono>
 
+#include "chat/crypto/aes_engine.hpp"
 #include "chat/common/messages.hpp"
 #include "chat/common/protocol.hpp"
 
@@ -125,7 +126,11 @@ namespace chat::client
 
         try
         {
-            send_packet(Protocol::encode(MessageType::MESSAGE, TextMsg{text}));
+            const auto encrypted = crypto::AESEngine::encrypt_string(text, room_key_);
+            send_packet(Protocol::encode(
+                MessageType::MESSAGE,
+                TextMsg{auth::SRPUtils::bytes_to_base64(encrypted)}
+            ));
         }
         catch (const std::exception& e)
         {
@@ -233,7 +238,20 @@ namespace chat::client
 
     void Client::handle_broadcast(const std::vector<uint8_t>& payload)
     {
-        auto [username, text, timestamp_ms] = Protocol::decode<BroadcastMsg>(payload);
+        auto [username, encrypted_text_b64, timestamp_ms] = Protocol::decode<BroadcastMsg>(payload);
+        std::string text;
+        try
+        {
+            const auto encrypted = auth::SRPUtils::base64_to_bytes(encrypted_text_b64);
+            text                 = crypto::AESEngine::decrypt_string(encrypted, room_key_);
+        }
+        catch (const std::exception& e)
+        {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
+            std::cerr << "\nFailed to decrypt message from " << username << ": " << e.what() << std::endl;
+            std::cout << "> " << std::flush;
+            return;
+        }
 
         auto timestamp = std::chrono::system_clock::time_point(
             std::chrono::milliseconds(timestamp_ms));
@@ -364,8 +382,12 @@ namespace chat::client
             throw std::runtime_error("Server verification failed");
         }
 
-        // store room key for message encryption
-        room_key_ = auth::SRPUtils::hash_sha256(room_salt); // derive from room_salt
+        (void)room_salt;
+        auto session_key_b64 = auth::SRPUtils::base64_to_bytes(srpSuccessMsg.session_key_b64);
+        room_key_            = auth::SRPUtils::base64_to_bytes(
+            std::string(session_key_b64.begin(), session_key_b64.end()));
+        if (room_key_.size() != crypto::AESEngine::KEY_SIZE)
+            throw std::runtime_error("Invalid AES room key size");
 
         // step 5: receive INIT to get messages and users
         auto [init_type, init_payload] = receive_packet();
