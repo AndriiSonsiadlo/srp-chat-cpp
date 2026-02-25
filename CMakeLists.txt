@@ -33,6 +33,7 @@ endif()
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(unofficial-pdcurses CONFIG REQUIRED)
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
@@ -99,6 +100,7 @@ target_link_libraries(chat_client
         chat_crypto
         Boost::system
         Threads::Threads
+        unofficial::pdcurses::pdcurses
 )
 
 # GTest
