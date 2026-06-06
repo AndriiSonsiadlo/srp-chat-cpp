@@ -1,9 +1,12 @@
-cmake_minimum_required(VERSION 4.0.0)
-project(SRPChat VERSION 0.1.0)
+cmake_minimum_required(VERSION 3.25)
+project(SRPChat VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(BUILD_TESTS "Build tests" ON)
+option(CHAT_WERROR "Treat warnings as errors" OFF)
 
 # required for Boost.Asio
 if(WIN32)
@@ -13,28 +16,20 @@ if(WIN32)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(
-        -Wall
-        -Wextra
-        -Wpedantic
-    )
-
-    if(CMAKE_BUILD_TYPE MATCHES "Debug")
-        add_compile_options(-g -O0)
-    else()
-        add_compile_options(-O2)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow)
+    if(CHAT_WERROR)
+        add_compile_options(-Werror)
     endif()
 elseif(MSVC)
-    add_compile_options(/W4)
-    # Disable specific warnings
-    add_compile_options(/wd4996)  # Deprecated functions
+    add_compile_options(/W4 /wd4996)
+    if(CHAT_WERROR)
+        add_compile_options(/WX)
+    endif()
 endif()
 
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-
-include_directories(${PROJECT_SOURCE_DIR}/include)
 
 # Common library
 add_library(chat_common STATIC
@@ -68,7 +63,6 @@ target_link_libraries(chat_crypto
         PUBLIC
         OpenSSL::SSL
         OpenSSL::Crypto
-        chat_auth
 )
 target_include_directories(chat_crypto PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
@@ -102,7 +96,6 @@ target_link_libraries(chat_client
 )
 
 # GTest
-option(BUILD_TESTS "Build tests" ON)
 if(BUILD_TESTS)
     find_package(GTest REQUIRED)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -146,6 +139,7 @@ if(BUILD_TESTS)
     target_link_libraries(aes_tests
             PRIVATE
             chat_crypto
+            chat_auth
             GTest::gtest_main
     )
 

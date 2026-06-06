@@ -61,3 +61,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 CMakeUserPresets.json
+
+# runtime state
+users.db
+users.db.tmp

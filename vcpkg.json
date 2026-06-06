@@ -1,0 +1,19 @@
+{
+  "name": "srp-chat",
+  "version": "1.0.0",
+  "description": "SRP-6a authenticated chat server and client",
+  "builtin-baseline": "8f57207a8a1b96a4a864e11f85d57b0a252b3ac3",
+  "dependencies": [
+    "boost-asio",
+    "boost-system",
+    "openssl"
+  ],
+  "features": {
+    "tests": {
+      "description": "Build the unit test suite",
+      "dependencies": [
+        "gtest"
+      ]
+    }
+  }
+}
