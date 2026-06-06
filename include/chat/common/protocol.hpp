@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <array>
 #include <stdexcept>
 
 #include <boost/asio.hpp>
@@ -70,11 +71,17 @@ namespace chat
         static std::vector<T> read_field(BufferReader& r, std::type_identity<std::vector<T>>)
         {
             const auto count = r.read<uint32_t>();
+            if (count > kMaxVectorCount)
+                throw std::runtime_error("Vector field exceeds maximum element count");
+
             std::vector<T> result;
             result.reserve(count);
 
             for (uint32_t i = 0; i < count; ++i) {
                 const auto item_size = r.read<uint32_t>();
+                if (item_size > kMaxStringLength)
+                    throw std::runtime_error("Vector element exceeds maximum size");
+
                 std::vector<uint8_t> item_data(item_size);
                 r.read_bytes(item_data.data(), item_size);
                 result.push_back(deserialize_object<T>(item_data));
@@ -115,17 +122,15 @@ namespace chat
 
         static std::vector<uint8_t> make_packet(MessageType type, const std::vector<uint8_t>& payload)
         {
-            std::vector<uint8_t> packet(sizeof(MsgHeader) + payload.size());
-
-            const MsgHeader header{
+            const auto raw = encode_header(MsgHeader{
                 .type = static_cast<uint16_t>(type),
                 .size = static_cast<uint32_t>(payload.size())
-            };
+            });
 
-            std::memcpy(packet.data(), &header, sizeof(MsgHeader));
-            if (!payload.empty())
-                std::memcpy(packet.data() + sizeof(MsgHeader), payload.data(), payload.size());
-
+            std::vector<uint8_t> packet;
+            packet.reserve(MsgHeader::kWireSize + payload.size());
+            packet.insert(packet.end(), raw.begin(), raw.end());
+            packet.insert(packet.end(), payload.begin(), payload.end());
             return packet;
         }
     };
@@ -143,13 +148,13 @@ namespace chat
 
         inline std::pair<MessageType, std::vector<uint8_t>> receive_packet(boost::asio::ip::tcp::socket& socket)
         {
-            // read header first
-            MsgHeader header{};
-            boost::asio::read(socket, boost::asio::buffer(&header, sizeof(MsgHeader)));
+            std::array<uint8_t, MsgHeader::kWireSize> raw{};
+            boost::asio::read(socket, boost::asio::buffer(raw));
+
+            const auto header = decode_header(raw);
             if (header.size > kMaxPayloadSize)
                 throw std::runtime_error("Incoming payload exceeds maximum allowed size");
 
-            // read payload
             std::vector<uint8_t> payload(header.size);
             if (header.size > 0)
                 boost::asio::read(socket, boost::asio::buffer(payload));

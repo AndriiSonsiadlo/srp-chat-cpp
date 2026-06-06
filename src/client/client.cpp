@@ -293,7 +293,9 @@ namespace chat::client
 
         // step 1: generate A and send SRP_INIT
         auto A = srp_client_->generate_A();
-        send_packet(Protocol::encode(MessageType::SRP_INIT, SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A)}));
+        send_packet(Protocol::encode(
+            MessageType::SRP_INIT,
+            SrpInitMsg{kProtocolVersion, username_, auth::SRPUtils::bytes_to_base64(A)}));
 
         // step 2: receive response (could be SRP_CHALLENGE, SRP_USER_NOT_FOUND, or ERROR_MSG)
         auto [type, payload] = receive_packet();
@@ -314,7 +316,8 @@ namespace chat::client
 
                 auto A_retry = srp_client_->generate_A();
                 send_packet(Protocol::encode(
-                    MessageType::SRP_INIT, SrpInitMsg{username_, auth::SRPUtils::bytes_to_base64(A_retry)}
+                    MessageType::SRP_INIT,
+                    SrpInitMsg{kProtocolVersion, username_, auth::SRPUtils::bytes_to_base64(A_retry)}
                 ));
 
                 // Receive the challenge

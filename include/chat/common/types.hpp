@@ -4,16 +4,45 @@
 #include <chrono>
 #include <cstdint>
 #include <tuple>
+#include <array>
+#include <cstddef>
 
 namespace chat
 {
-#pragma pack(push, 1)
+    inline constexpr uint16_t kProtocolVersion = 1;
+
     struct MsgHeader
     {
         uint16_t type; // MessageType
         uint32_t size; // payload size in bytes
+
+        // Bytes on the wire: 2 for type, 4 for size. Deliberately not
+        // sizeof(MsgHeader) — the struct is never memcpy'd into a packet.
+        static constexpr size_t kWireSize = 6;
     };
-#pragma pack(pop)
+
+    inline std::array<uint8_t, MsgHeader::kWireSize> encode_header(const MsgHeader& header)
+    {
+        return {
+            static_cast<uint8_t>(header.type & 0xFFu),
+            static_cast<uint8_t>((header.type >> 8) & 0xFFu),
+            static_cast<uint8_t>(header.size & 0xFFu),
+            static_cast<uint8_t>((header.size >> 8) & 0xFFu),
+            static_cast<uint8_t>((header.size >> 16) & 0xFFu),
+            static_cast<uint8_t>((header.size >> 24) & 0xFFu),
+        };
+    }
+
+    inline MsgHeader decode_header(const std::array<uint8_t, MsgHeader::kWireSize>& raw)
+    {
+        return MsgHeader{
+            .type = static_cast<uint16_t>(raw[0] | (raw[1] << 8)),
+            .size = static_cast<uint32_t>(raw[2])
+                  | (static_cast<uint32_t>(raw[3]) << 8)
+                  | (static_cast<uint32_t>(raw[4]) << 16)
+                  | (static_cast<uint32_t>(raw[5]) << 24),
+        };
+    }
 
     enum class MessageType : uint16_t
     {
@@ -58,6 +87,15 @@ namespace chat
         std::string text;
         std::chrono::system_clock::time_point timestamp;
 
+        // NOTE: as_tuple() is retained here, despite the Task 2 brief calling for
+        // its removal, because InitMsg::messages (std::vector<Message>) is still
+        // serialized directly by Protocol in this task -- deleting it makes
+        // Protocol::encode/decode<InitMsg> (and thus server.cpp's INIT send path,
+        // plus the brief's own wire_tests.cpp OversizedVectorCountIsRejected test)
+        // fail to compile, since read_field<vector<T>>'s body unconditionally
+        // instantiates deserialize_object<T> regardless of the runtime early-throw
+        // path. Task 7 (InitMsg::messages -> vector<HistoryEntry>) is the point
+        // where Message can safely lose serialization support.
         [[nodiscard]] auto as_tuple() const
         {
             return std::tie(username, text);

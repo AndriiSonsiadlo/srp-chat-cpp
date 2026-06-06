@@ -143,11 +143,21 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(wire_tests
+            tests/wire_tests.cpp
+    )
+    target_link_libraries(wire_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(connection_manager_tests)
     gtest_discover_tests(protocol_tests)
     gtest_discover_tests(types_tests)
+    gtest_discover_tests(wire_tests)
 endif()
 
 install(TARGETS chat_server chat_client

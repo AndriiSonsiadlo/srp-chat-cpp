@@ -61,19 +61,26 @@ namespace chat::server
                 }
 
                 // parse SRP_INIT
-                auto [init_username, A_b64] = Protocol::decode<SrpInitMsg>(msg);
-                if (init_username.empty() || A_b64.empty()) {
+                auto init = Protocol::decode<SrpInitMsg>(msg);
+                if (init.protocol_version != kProtocolVersion) {
+                    conn->send_packet(Protocol::encode(
+                        MessageType::ERROR_MSG,
+                        ErrorMsg{"Unsupported protocol version " + std::to_string(init.protocol_version)
+                                 + "; server speaks version " + std::to_string(kProtocolVersion)}));
+                    return std::nullopt;
+                }
+
+                if (init.username.empty() || init.A_b64.empty()) {
                     conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid SRP_INIT"}));
                     return std::nullopt;
                 }
 
-                // decode A
-                auto A = auth::SRPUtils::base64_to_bytes(A_b64);
+                auto A = auth::SRPUtils::base64_to_bytes(init.A_b64);
 
                 // initialize SRP authentication
                 try {
-                    challenge = srp_server_->init_authentication(init_username, A);
-                    username  = std::move(init_username);
+                    challenge = srp_server_->init_authentication(init.username, A);
+                    username  = std::move(init.username);
                     break;
                 }
                 catch (const std::exception&) {

@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 #include <chrono>
+#include <array>
+#include <algorithm>
 
 namespace chat
 {
@@ -19,16 +21,16 @@ namespace chat
 
         MsgHeader extract_header(const std::vector<uint8_t>& packet)
         {
-            EXPECT_GE(packet.size(), sizeof(MsgHeader));
-            MsgHeader header;
-            std::memcpy(&header, packet.data(), sizeof(MsgHeader));
-            return header;
+            EXPECT_GE(packet.size(), MsgHeader::kWireSize);
+            std::array<uint8_t, MsgHeader::kWireSize> raw{};
+            std::copy_n(packet.begin(), MsgHeader::kWireSize, raw.begin());
+            return decode_header(raw);
         }
 
         std::vector<uint8_t> extract_payload(const std::vector<uint8_t>& packet)
         {
-            EXPECT_GE(packet.size(), sizeof(MsgHeader));
-            return std::vector<uint8_t>(packet.begin() + sizeof(MsgHeader), packet.end());
+            EXPECT_GE(packet.size(), MsgHeader::kWireSize);
+            return std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
         }
     };
 
@@ -188,7 +190,7 @@ namespace chat
         auto header  = extract_header(packet);
         auto payload = extract_payload(packet);
 
-        EXPECT_EQ(packet.size(), sizeof(MsgHeader) + header.size);
+        EXPECT_EQ(packet.size(), MsgHeader::kWireSize + header.size);
         EXPECT_EQ(payload.size(), header.size);
     }
 

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include "chat/common/types.hpp"
 
@@ -89,11 +90,12 @@ namespace chat
 
     struct SrpInitMsg
     {
+        uint16_t protocol_version;
         std::string username;
         std::string A_b64;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(username, A_b64); }
-        [[nodiscard]] auto as_tuple() { return std::tie(username, A_b64); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(protocol_version, username, A_b64); }
+        [[nodiscard]] auto as_tuple() { return std::tie(protocol_version, username, A_b64); }
     };
 
     struct SrpChallengeMsg
