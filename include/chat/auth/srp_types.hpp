@@ -26,6 +26,9 @@ namespace chat::auth
 
     constexpr const char* SRP_G_HEX = "02"; // generator g = 2
 
+    // HKDF context string binding the derived key to this protocol and version.
+    inline constexpr const char* kSessionKeyInfo = "srp-chat/aes-256-gcm/v1";
+
     // SRP session state
     struct SRPSession
     {

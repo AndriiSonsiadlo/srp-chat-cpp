@@ -1,9 +1,11 @@
 #include "chat/auth/srp_server.hpp"
 #include "chat/auth/srp_types.hpp"
+#include "chat/crypto/aes_engine.hpp"
 #include <fstream>
 #include <sstream>
 #include <random>
 #include <iomanip>
+#include <stdexcept>
 
 namespace chat::auth
 {
@@ -22,6 +24,30 @@ namespace chat::auth
     }
 
     SRPServer::~SRPServer() = default;
+
+    SRPServer::SRPServer(SRPServer&& other) noexcept
+        : N_(std::move(other.N_))
+          , g_(std::move(other.g_))
+          , k_(std::move(other.k_))
+          , users_(std::move(other.users_))
+          , sessions_(std::move(other.sessions_))
+          , room_salt_(std::move(other.room_salt_))
+    {
+    }
+
+    SRPServer& SRPServer::operator=(SRPServer&& other) noexcept
+    {
+        if (this != &other)
+        {
+            N_         = std::move(other.N_);
+            g_         = std::move(other.g_);
+            k_         = std::move(other.k_);
+            users_     = std::move(other.users_);
+            sessions_  = std::move(other.sessions_);
+            room_salt_ = std::move(other.room_salt_);
+        }
+        return *this;
+    }
 
     bool SRPServer::register_user(const std::string& username, const UserCredentials& creds)
     {
@@ -210,20 +236,27 @@ namespace chat::auth
         // calculate H_AMK = H(A, M, K)
         auto H_AMK = SRPUtils::calculate_H_AMK(A, M, K);
 
-        // generate Fernet-compatible session key (URL-safe base64 of 32 bytes)
-        auto session_key_bytes = SRPUtils::random_bytes(32);
-        auto session_key_b64   = SRPUtils::bytes_to_base64(session_key_bytes);
-
-        // update session
+        // update session (K is retained so the AES key can be derived locally)
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
             sessions_[user_id] = session;
         }
 
-        return VerifyResponse{
-            .H_AMK = H_AMK,
-            .session_key = std::vector<uint8_t>(session_key_b64.begin(), session_key_b64.end())
-        };
+        return VerifyResponse{.H_AMK = H_AMK};
+    }
+
+    std::vector<uint8_t> SRPServer::derive_session_key(const std::string& user_id) const
+    {
+        std::vector<uint8_t> K;
+        {
+            std::lock_guard<std::mutex> lock(sessions_mutex_);
+            const auto it = sessions_.find(user_id);
+            if (it == sessions_.end() || !it->second.authenticated)
+                throw std::runtime_error("No authenticated session for this user id");
+            K = it->second.K;
+        }
+
+        return crypto::AESEngine::derive_key(K, room_salt_, kSessionKeyInfo);
     }
 
     bool SRPServer::is_session_valid(const std::string& user_id)

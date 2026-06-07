@@ -42,19 +42,6 @@ target_link_libraries(chat_common
 )
 target_include_directories(chat_common PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-# Auth library
-add_library(chat_auth STATIC
-        src/auth/srp_utils.cpp
-        src/auth/srp_client.cpp
-        src/auth/srp_server.cpp
-)
-target_link_libraries(chat_auth
-        PUBLIC
-        OpenSSL::SSL
-        OpenSSL::Crypto
-)
-target_include_directories(chat_auth PUBLIC ${PROJECT_SOURCE_DIR}/include)
-
 # Crypto library
 add_library(chat_crypto STATIC
         src/crypto/aes_engine.cpp
@@ -65,6 +52,20 @@ target_link_libraries(chat_crypto
         OpenSSL::Crypto
 )
 target_include_directories(chat_crypto PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+# Auth library
+add_library(chat_auth STATIC
+        src/auth/srp_utils.cpp
+        src/auth/srp_client.cpp
+        src/auth/srp_server.cpp
+)
+target_link_libraries(chat_auth
+        PUBLIC
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        chat_crypto
+)
+target_include_directories(chat_auth PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 # Server executable
 add_executable(chat_server
@@ -152,10 +153,21 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(srp_tests
+            tests/srp_tests.cpp
+    )
+    target_link_libraries(srp_tests
+            PRIVATE
+            chat_auth
+            chat_crypto
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(connection_manager_tests)
     gtest_discover_tests(protocol_tests)
+    gtest_discover_tests(srp_tests)
     gtest_discover_tests(types_tests)
     gtest_discover_tests(wire_tests)
 endif()

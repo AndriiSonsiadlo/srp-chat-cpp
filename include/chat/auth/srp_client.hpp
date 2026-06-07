@@ -17,7 +17,7 @@ namespace chat::auth
     {
     private:
         std::string username_;
-        std::string* password_;
+        std::string password_;
 
         // SRP parameters
         std::unique_ptr<SRPUtils::BigNum> N_; // safe prime
@@ -41,7 +41,7 @@ namespace chat::auth
         bool authenticated_{false};
 
     public:
-        SRPClient(std::string username, std::string *password);
+        SRPClient(std::string username, std::string password);
         ~SRPClient();
 
         // step 1: generate client's public ephemeral value A
@@ -56,6 +56,10 @@ namespace chat::auth
 
         // get session key after successful authentication
         [[nodiscard]] std::vector<uint8_t> get_session_key() const { return K_; }
+
+        // AES-256-GCM key for this session: HKDF(K, salt = room_salt, info = kSessionKeyInfo).
+        // Never transmitted. Throws if process_challenge() has not run.
+        [[nodiscard]] std::vector<uint8_t> derive_session_key(const std::vector<uint8_t>& room_salt) const;
 
         [[nodiscard]] bool is_authenticated() const { return authenticated_; }
 

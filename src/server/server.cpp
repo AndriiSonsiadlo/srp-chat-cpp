@@ -130,19 +130,13 @@ namespace chat::server
                 return std::nullopt;
             }
 
-            // send SRP_SUCCESS
-            conn->send_packet(
-                Protocol::encode(
-                    MessageType::SRP_SUCCESS,
-                    SrpSuccessMsg{
-                        auth::SRPUtils::bytes_to_base64(verify.H_AMK),
-                        auth::SRPUtils::bytes_to_base64(verify.session_key)
-                    }
-                ));
+            // send SRP_SUCCESS — proof only, no key material
+            conn->send_packet(Protocol::encode(
+                MessageType::SRP_SUCCESS,
+                SrpSuccessMsg{auth::SRPUtils::bytes_to_base64(verify.H_AMK)}));
 
             std::string user_id = response_user_id;
-            auto session_key    = auth::SRPUtils::base64_to_bytes(
-                std::string(verify.session_key.begin(), verify.session_key.end()));
+            auto session_key    = srp_server_->derive_session_key(user_id);
             if (session_key.size() != crypto::AESEngine::KEY_SIZE) {
                 conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid session key size"}));
                 return std::nullopt;

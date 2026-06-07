@@ -36,9 +36,6 @@ namespace chat::client
     {
         try
         {
-            // create SRP client
-            srp_client_ = std::make_unique<auth::SRPClient>(username_, &password_);
-
             // try to authenticate, offer registration if user doesn't exist
             srp_authenticate();
 
@@ -291,6 +288,13 @@ namespace chat::client
         auto endpoints = resolver.resolve(host_, std::to_string(port_));
         boost::asio::connect(socket_, endpoints);
 
+        ui_lock.lock();
+        std::cout << "Enter password: ";
+        ui_lock.unlock();
+        std::getline(std::cin, password_);
+
+        srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
+
         // step 1: generate A and send SRP_INIT
         auto A = srp_client_->generate_A();
         send_packet(Protocol::encode(
@@ -345,8 +349,6 @@ namespace chat::client
         ui_lock.lock();
         std::cout << "Authenticating..." << std::endl;
         ui_lock.unlock();
-        std::cout << "Enter password: ";
-        std::getline(std::cin, password_);
 
         auto srpChallengeMsg = Protocol::decode<SrpChallengeMsg>(payload);
         user_id_             = srpChallengeMsg.user_id;
@@ -378,14 +380,9 @@ namespace chat::client
 
         // verify server
         if (!srp_client_->verify_server(H_AMK))
-        {
             throw std::runtime_error("Server verification failed");
-        }
 
-        (void)room_salt;
-        auto session_key_b64 = auth::SRPUtils::base64_to_bytes(srpSuccessMsg.session_key_b64);
-        room_key_            = auth::SRPUtils::base64_to_bytes(
-            std::string(session_key_b64.begin(), session_key_b64.end()));
+        room_key_ = srp_client_->derive_session_key(room_salt);
         if (room_key_.size() != crypto::AESEngine::KEY_SIZE)
             throw std::runtime_error("Invalid AES room key size");
 

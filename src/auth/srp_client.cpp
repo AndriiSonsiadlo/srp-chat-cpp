@@ -1,14 +1,16 @@
 #include "chat/auth/srp_client.hpp"
 
 #include <stdexcept>
+#include <openssl/crypto.h>
 
 #include "chat/auth/srp_types.hpp"
+#include "chat/crypto/aes_engine.hpp"
 
 namespace chat::auth
 {
-    SRPClient::SRPClient(std::string username, std::string* password)
+    SRPClient::SRPClient(std::string username, std::string password)
         : username_(std::move(username))
-          , password_(password)
+          , password_(std::move(password))
     {
         // initialize SRP parameters
         N_ = std::make_unique<SRPUtils::BigNum>(SRP_N_HEX_2048);
@@ -16,7 +18,11 @@ namespace chat::auth
         k_ = std::make_unique<SRPUtils::BigNum>(SRPUtils::calculate_k(*N_, *g_));
     }
 
-    SRPClient::~SRPClient() = default;
+    SRPClient::~SRPClient()
+    {
+        OPENSSL_cleanse(password_.data(), password_.size());
+        if (!K_.empty()) OPENSSL_cleanse(K_.data(), K_.size());
+    }
 
     std::vector<uint8_t> SRPClient::generate_A()
     {
@@ -52,7 +58,7 @@ namespace chat::auth
         auto u = SRPUtils::calculate_u(*A_, *B_);
 
         // calculate x = H(salt, H(username, ":", password))
-        auto x = SRPUtils::calculate_x(salt_, username_, *password_);
+        auto x = SRPUtils::calculate_x(salt_, username_, password_);
 
         // calculate S = (B - kg^x)^(a + ux) mod N
         auto S = SRPUtils::calculate_S_client(*N_, *B_, *k_, *g_, x, *a_, u);
@@ -84,6 +90,14 @@ namespace chat::auth
 
         authenticated_ = (diff == 0);
         return authenticated_;
+    }
+
+    std::vector<uint8_t> SRPClient::derive_session_key(const std::vector<uint8_t>& room_salt) const
+    {
+        if (K_.empty())
+            throw std::runtime_error("Must call process_challenge() first");
+
+        return crypto::AESEngine::derive_key(K_, room_salt, kSessionKeyInfo);
     }
 
     UserCredentials SRPClient::register_user(const std::string& username, const std::string& password)

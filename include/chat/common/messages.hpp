@@ -121,9 +121,8 @@ namespace chat
     struct SrpSuccessMsg
     {
         std::string H_AMK_b64;
-        std::string session_key_b64;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(H_AMK_b64, session_key_b64); }
-        [[nodiscard]] auto as_tuple() { return std::tie(H_AMK_b64, session_key_b64); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(H_AMK_b64); }
+        [[nodiscard]] auto as_tuple() { return std::tie(H_AMK_b64); }
     };
 } // namespace chat
