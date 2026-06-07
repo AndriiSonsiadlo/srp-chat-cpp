@@ -419,6 +419,9 @@ namespace chat::client
         ui_lock.unlock();
         std::getline(std::cin, password_);
 
+        // rebuild srp_client_ so the retry handshake uses the password just registered
+        srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
+
         // generate credentials
         auto creds = auth::SRPClient::register_user(username_, password_);
 
