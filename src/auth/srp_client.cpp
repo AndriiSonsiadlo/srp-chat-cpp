@@ -55,8 +55,7 @@ namespace chat::auth
 
         // calculate u = H(A, B)
         auto u = SRPUtils::calculate_u(*A_, *B_);
-        if (BN_is_zero(u.get()) == 1)
-            throw std::runtime_error("Invalid u parameter");
+        SRPUtils::reject_zero_u(u);
 
         // calculate x = H(salt, H(username, ":", password))
         auto x = SRPUtils::calculate_x(salt_, username_, password_);

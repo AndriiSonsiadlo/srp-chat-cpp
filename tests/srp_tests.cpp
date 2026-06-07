@@ -198,11 +198,19 @@ namespace chat::auth
         authenticate("karl", "pw-karl");
     }
 
-    TEST(SrpTest, CalculateUIsNonZeroForOrdinaryEphemeralKeys)
+    TEST(SrpTest, RejectZeroURejectsZero)
     {
-        // Sanity-check for the u == 0 guards in
-        // SRPServer::verify_authentication / SRPClient::process_challenge:
-        // ordinary, distinct ephemeral keys never produce u == 0.
+        // Both SRPServer::verify_authentication and SRPClient::process_challenge
+        // route their u == 0 check through this exact function, so this test
+        // exercises the real guard, not a lookalike. Forcing a genuine u == 0
+        // through the real protocol requires a SHA-256 preimage — infeasible
+        // to construct in a test — hence testing the extracted guard directly.
+        SRPUtils::BigNum zero_u;
+        EXPECT_THROW(SRPUtils::reject_zero_u(zero_u), std::runtime_error);
+    }
+
+    TEST(SrpTest, RejectZeroUAcceptsOrdinaryU)
+    {
         auto server = make_server_with_user("mallory", "pw");
         SRPClient client("mallory", "pw");
 
@@ -213,19 +221,6 @@ namespace chat::auth
         SRPUtils::BigNum B_bn(challenge.B);
         auto u = SRPUtils::calculate_u(A_bn, B_bn);
 
-        EXPECT_EQ(BN_is_zero(u.get()), 0);
-    }
-
-    TEST(SrpTest, ZeroUGuardConditionRejectsSyntheticZero)
-    {
-        // Directly exercises the guard predicate used by both
-        // SRPServer::verify_authentication and SRPClient::process_challenge
-        // (`BN_is_zero(u.get()) == 1`) against a synthetic zero BigNum.
-        // Forcing SHA-256 to output all-zero bytes through the real protocol
-        // is a single-target preimage search over 2^256 — computationally
-        // infeasible to construct in a test — so this pins the guard's
-        // condition directly instead.
-        SRPUtils::BigNum zero_u;
-        EXPECT_EQ(BN_is_zero(zero_u.get()), 1);
+        EXPECT_NO_THROW(SRPUtils::reject_zero_u(u));
     }
 } // namespace chat::auth

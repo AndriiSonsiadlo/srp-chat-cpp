@@ -33,6 +33,12 @@ namespace chat::auth
         return BN_is_zero(remainder.get()) == 1;
     }
 
+    void SRPUtils::reject_zero_u(const BigNum& u)
+    {
+        if (BN_is_zero(u.get()) == 1)
+            throw std::runtime_error("Invalid u parameter");
+    }
+
     bool SRPUtils::constant_time_equals(
         const std::vector<uint8_t>& a,
         const std::vector<uint8_t>& b)

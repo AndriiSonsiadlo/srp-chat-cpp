@@ -136,6 +136,10 @@ namespace chat::auth
         // SRP-6a safety check: reject ephemeral values congruent to zero mod N.
         static bool is_zero_mod(const BigNum& value, const BigNum& N);
 
+        // SRP-6a: reject u = 0. u should be cryptographically infeasible to hit by
+        // chance; this guards against a degenerate or maliciously crafted A/B pair.
+        static void reject_zero_u(const BigNum& u);
+
         // Timing-safe byte comparison. Returns false for differing sizes.
         static bool constant_time_equals(
             const std::vector<uint8_t>& a,
