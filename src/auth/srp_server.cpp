@@ -3,9 +3,10 @@
 #include "chat/crypto/aes_engine.hpp"
 #include <fstream>
 #include <sstream>
-#include <random>
 #include <iomanip>
 #include <stdexcept>
+#include <chrono>
+#include <algorithm>
 
 namespace chat::auth
 {
@@ -135,9 +136,14 @@ namespace chat::auth
             creds = it->second;
         }
 
-        // create SRP session
+        // SRP-6a: A ≡ 0 (mod N) would force S = 0. Refuse it.
+        const SRPUtils::BigNum A_bn(A);
+        if (SRPUtils::is_zero_mod(A_bn, *N_))
+            throw std::runtime_error("Invalid client ephemeral A");
+
         SRPSession session;
         session.user_id  = generate_user_id();
+        session.username = username;
         session.A        = A;
         session.salt     = creds.salt;
         session.verifier = creds.verifier;
@@ -153,10 +159,10 @@ namespace chat::auth
         SRPUtils::BigNum b(b_bytes);
 
         // calculate B = kv + g^b mod N
-        auto B    = SRPUtils::calculate_B(*k_, v, *g_, b, *N_);
-        session.B = B.to_bytes();
+        auto B = SRPUtils::calculate_B(*k_, v, *g_, b, *N_);
 
-        // store session
+        auto B_bytes    = B.to_bytes();
+        session.B       = B_bytes;
         std::string user_id = session.user_id;
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
@@ -165,7 +171,7 @@ namespace chat::auth
 
         return ChallengeResponse{
             .user_id = user_id,
-            .B = sessions_[user_id].B,
+            .B = std::move(B_bytes),
             .salt = creds.salt,
             .room_salt = room_salt_
         };
@@ -193,6 +199,8 @@ namespace chat::auth
 
         // calculate u = H(A, B)
         auto u = SRPUtils::calculate_u(A, B);
+        if (BN_is_zero(u.get()) == 1)
+            throw std::runtime_error("Invalid u parameter");
 
         // calculate S = (A * v^u)^b mod N
         auto S = SRPUtils::calculate_S_server(A, v, u, b, *N_);
@@ -201,33 +209,10 @@ namespace chat::auth
         auto K    = SRPUtils::calculate_K(S);
         session.K = K;
 
-        // calculate expected M
-        // note: We need username for M calculation, so we look it up
-        std::string username;
-        {
-            std::lock_guard<std::mutex> lock(users_mutex_);
-            for (const auto& [uname, creds] : users_)
-            {
-                if (creds.salt == session.salt)
-                {
-                    username = uname;
-                    break;
-                }
-            }
-        }
-
         auto expected_M = SRPUtils::calculate_M(
-            *N_, *g_, username, session.salt, A, B, K);
+            *N_, *g_, session.username, session.salt, A, B, K);
 
-        // constant-time comparison
-        if (M.size() != expected_M.size())
-            throw std::runtime_error("Authentication failed");
-
-        uint8_t diff = 0;
-        for (size_t i = 0; i < M.size(); ++i)
-            diff |= M[i] ^ expected_M[i];
-
-        if (diff != 0)
+        if (!SRPUtils::constant_time_equals(M, expected_M))
             throw std::runtime_error("Authentication failed");
 
         // authentication successful
@@ -272,23 +257,19 @@ namespace chat::auth
         sessions_.erase(user_id);
     }
 
-    void SRPServer::clear_expired_sessions(int timeout_seconds)
+    void SRPServer::clear_expired_sessions(const int timeout_seconds)
     {
-        // TODO: Implement timeout-based cleanup
-        // for now, sessions are cleared on disconnect
+        const auto cutoff = std::chrono::steady_clock::now()
+                          - std::chrono::seconds(timeout_seconds);
+
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        std::erase_if(sessions_, [cutoff](const auto& entry) {
+            return entry.second.created_at <= cutoff;
+        });
     }
 
     std::string SRPServer::generate_user_id() const
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<> dis(0, 15);
-
-        std::ostringstream oss;
-        oss << "user_";
-        for (int i = 0; i < 8; ++i)
-            oss << std::hex << dis(gen);
-
-        return oss.str();
+        return "user_" + SRPUtils::random_hex_id(16);
     }
 } // namespace chat::auth

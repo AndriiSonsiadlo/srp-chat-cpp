@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include <array>
+#include <chrono>
 
 namespace chat::auth
 {
@@ -33,12 +34,14 @@ namespace chat::auth
     struct SRPSession
     {
         std::string user_id;
+        std::string username;          // recorded at init; never re-derived from the salt
         std::vector<uint8_t> A;        // client's public ephemeral key
         std::vector<uint8_t> b;        // server's private ephemeral key
         std::vector<uint8_t> B;        // server's public ephemeral key
         std::vector<uint8_t> salt;     // user's salt
         std::vector<uint8_t> verifier; // user's verifier (v = g^x)
-        std::vector<uint8_t> K;        // shared session key
+        std::vector<uint8_t> K;        // shared session secret
+        std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
         bool authenticated{false};
     };
 

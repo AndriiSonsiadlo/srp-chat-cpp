@@ -31,17 +31,12 @@ namespace chat::auth
         a_           = std::make_unique<SRPUtils::BigNum>(a_bytes);
 
         // calculate A = g^a mod N
-        BN_CTX* ctx = BN_CTX_new();
-        if (!ctx) throw std::runtime_error("Failed to create BN_CTX");
+        SRPUtils::BnCtx ctx;
 
         A_ = std::make_unique<SRPUtils::BigNum>();
-        if (!BN_mod_exp(A_->get(), g_->get(), a_->get(), N_->get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(A_->get(), g_->get(), a_->get(), N_->get(), ctx.get()))
             throw std::runtime_error("Failed to calculate A = g^a mod N");
-        }
 
-        BN_CTX_free(ctx);
         return A_->to_bytes();
     }
 
@@ -54,8 +49,14 @@ namespace chat::auth
         salt_ = salt;
         B_    = std::make_unique<SRPUtils::BigNum>(B);
 
+        // SRP-6a: B ≡ 0 (mod N) would force a degenerate shared secret.
+        if (SRPUtils::is_zero_mod(*B_, *N_))
+            throw std::runtime_error("Invalid server ephemeral B");
+
         // calculate u = H(A, B)
         auto u = SRPUtils::calculate_u(*A_, *B_);
+        if (BN_is_zero(u.get()) == 1)
+            throw std::runtime_error("Invalid u parameter");
 
         // calculate x = H(salt, H(username, ":", password))
         auto x = SRPUtils::calculate_x(salt_, username_, password_);
@@ -79,16 +80,7 @@ namespace chat::auth
 
         // calculate expected H_AMK = H(A, M, K)
         auto expected_H_AMK = SRPUtils::calculate_H_AMK(*A_, M_, K_);
-
-        // constant-time comparison
-        if (H_AMK.size() != expected_H_AMK.size())
-            return false;
-
-        uint8_t diff = 0;
-        for (size_t i = 0; i < H_AMK.size(); ++i)
-            diff |= H_AMK[i] ^ expected_H_AMK[i];
-
-        authenticated_ = (diff == 0);
+        authenticated_      = SRPUtils::constant_time_equals(H_AMK, expected_H_AMK);
         return authenticated_;
     }
 

@@ -14,6 +14,23 @@ namespace chat::auth
     class SRPUtils
     {
     public:
+        // RAII BN_CTX. Replaces the manual allocate/free-on-every-error-path
+        // pattern that the SRP maths used to repeat in each function.
+        class BnCtx
+        {
+        private:
+            BN_CTX* ctx_;
+
+        public:
+            BnCtx();
+            ~BnCtx();
+
+            BnCtx(const BnCtx&)            = delete;
+            BnCtx& operator=(const BnCtx&) = delete;
+
+            BN_CTX* get() { return ctx_; }
+        };
+
         // BigNum wrapper for RAII
         class BigNum
         {
@@ -115,6 +132,17 @@ namespace chat::auth
             const BigNum& A,
             const std::vector<uint8_t>& M,
             const std::vector<uint8_t>& K);
+
+        // SRP-6a safety check: reject ephemeral values congruent to zero mod N.
+        static bool is_zero_mod(const BigNum& value, const BigNum& N);
+
+        // Timing-safe byte comparison. Returns false for differing sizes.
+        static bool constant_time_equals(
+            const std::vector<uint8_t>& a,
+            const std::vector<uint8_t>& b);
+
+        // Cryptographically random hex identifier, `byte_count` bytes of entropy.
+        static std::string random_hex_id(size_t byte_count);
 
         // Convert bytes to/from hex
         static std::string bytes_to_hex(const std::vector<uint8_t>& bytes);

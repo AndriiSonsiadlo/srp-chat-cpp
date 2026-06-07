@@ -4,6 +4,7 @@
 #include "chat/crypto/aes_engine.hpp"
 
 #include <gtest/gtest.h>
+#include <set>
 
 namespace chat::auth
 {
@@ -96,5 +97,97 @@ namespace chat::auth
         };
 
         EXPECT_NE(authenticate("erin", "pw-1"), authenticate("frank", "pw-2"));
+    }
+
+    TEST(SrpTest, ServerRejectsZeroA)
+    {
+        auto server = make_server_with_user("grace", "pw");
+
+        // A ≡ 0 (mod N) forces S = 0 on the server side and must be refused
+        // outright. Both a literal zero and a bare N are rejected.
+        const std::vector<uint8_t> zero_A{0x00};
+        EXPECT_THROW((void)server.init_authentication("grace", zero_A), std::runtime_error);
+
+        const auto N_bytes = SRPUtils::BigNum(std::string(SRP_N_HEX_2048)).to_bytes();
+        EXPECT_THROW((void)server.init_authentication("grace", N_bytes), std::runtime_error);
+    }
+
+    TEST(SrpTest, ClientRejectsZeroB)
+    {
+        SRPClient client("heidi", "pw");
+        (void)client.generate_A();
+
+        const std::vector<uint8_t> zero_B{0x00};
+        const std::vector<uint8_t> salt(SRP_SALT_SIZE, 0x01);
+        EXPECT_THROW((void)client.process_challenge(zero_B, salt), std::runtime_error);
+    }
+
+    TEST(SrpTest, ConstantTimeEqualsMatchesValueEquality)
+    {
+        const std::vector<uint8_t> a{1, 2, 3, 4};
+        const std::vector<uint8_t> b{1, 2, 3, 4};
+        const std::vector<uint8_t> c{1, 2, 3, 5};
+        const std::vector<uint8_t> shorter{1, 2, 3};
+
+        EXPECT_TRUE(SRPUtils::constant_time_equals(a, b));
+        EXPECT_FALSE(SRPUtils::constant_time_equals(a, c));
+        EXPECT_FALSE(SRPUtils::constant_time_equals(a, shorter));
+    }
+
+    TEST(SrpTest, UserIdsAreLongAndDistinct)
+    {
+        std::set<std::string> ids;
+        for (int i = 0; i < 200; ++i) {
+            auto id = SRPUtils::random_hex_id(16);
+            EXPECT_EQ(id.size(), 32u); // 16 bytes, hex encoded
+            ids.insert(id);
+        }
+        EXPECT_EQ(ids.size(), 200u);
+    }
+
+    TEST(SrpTest, ExpiredSessionsAreSweptAway)
+    {
+        auto server = make_server_with_user("ivan", "pw");
+        SRPClient client("ivan", "pw");
+
+        const auto A         = client.generate_A();
+        const auto challenge = server.init_authentication("ivan", A);
+        const auto M         = client.process_challenge(challenge.B, challenge.salt);
+        (void)server.verify_authentication(challenge.user_id, M);
+
+        EXPECT_TRUE(server.is_session_valid(challenge.user_id));
+
+        server.clear_expired_sessions(0); // everything older than zero seconds
+        EXPECT_FALSE(server.is_session_valid(challenge.user_id));
+    }
+
+    TEST(SrpTest, SessionRemembersItsUsername)
+    {
+        // Two users deliberately share a salt so that the old salt-scanning
+        // lookup would resolve the wrong identity.
+        SRPServer server;
+        auto judy = SRPClient::register_user("judy", "pw-judy");
+        auto karl = SRPClient::register_user("karl", "pw-karl");
+        karl.salt = judy.salt;
+        // Re-derive karl's verifier under the now-shared salt so the
+        // collision is a legitimate one (internally-consistent salt/verifier
+        // pair), rather than a corrupted credential that would fail SRP's
+        // math regardless of the username-lookup bug this test targets.
+        {
+            SRPUtils::BigNum g(SRP_G_HEX);
+            SRPUtils::BigNum N(SRP_N_HEX_2048);
+            auto x    = SRPUtils::calculate_x(karl.salt, "karl", "pw-karl");
+            karl.verifier = SRPUtils::calculate_verifier(g, x, N).to_bytes();
+        }
+
+        server.register_user("judy", judy);
+        server.register_user("karl", karl);
+
+        SRPClient client("karl", "pw-karl");
+        const auto A         = client.generate_A();
+        const auto challenge = server.init_authentication("karl", A);
+        const auto M         = client.process_challenge(challenge.B, challenge.salt);
+
+        EXPECT_NO_THROW((void)server.verify_authentication(challenge.user_id, M));
     }
 } // namespace chat::auth

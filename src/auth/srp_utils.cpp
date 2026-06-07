@@ -5,6 +5,7 @@
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/buffer.h>
+#include <openssl/crypto.h>
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
@@ -12,6 +13,41 @@
 
 namespace chat::auth
 {
+    SRPUtils::BnCtx::BnCtx() : ctx_(BN_CTX_new())
+    {
+        if (!ctx_) throw std::runtime_error("Failed to create BN_CTX");
+    }
+
+    SRPUtils::BnCtx::~BnCtx()
+    {
+        if (ctx_) BN_CTX_free(ctx_);
+    }
+
+    bool SRPUtils::is_zero_mod(const BigNum& value, const BigNum& N)
+    {
+        BnCtx ctx;
+        BigNum remainder;
+        if (!BN_mod(remainder.get(), value.get(), N.get(), ctx.get()))
+            throw std::runtime_error("Failed to reduce value mod N");
+
+        return BN_is_zero(remainder.get()) == 1;
+    }
+
+    bool SRPUtils::constant_time_equals(
+        const std::vector<uint8_t>& a,
+        const std::vector<uint8_t>& b)
+    {
+        if (a.size() != b.size())
+            return false;
+
+        return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
+    }
+
+    std::string SRPUtils::random_hex_id(const size_t byte_count)
+    {
+        return bytes_to_hex(random_bytes(byte_count));
+    }
+
     // BigNum implementation
     SRPUtils::BigNum::BigNum() : bn_(BN_new())
     {
@@ -139,17 +175,11 @@ namespace chat::auth
         const BigNum& N)
     {
         // v = g^x mod N
-        BN_CTX* ctx = BN_CTX_new();
-        if (!ctx) throw std::runtime_error("Failed to create BN_CTX");
-
+        BnCtx ctx;
         BigNum v;
-        if (!BN_mod_exp(v.get(), g.get(), x.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(v.get(), g.get(), x.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate verifier");
-        }
 
-        BN_CTX_free(ctx);
         return v;
     }
 
@@ -161,33 +191,21 @@ namespace chat::auth
         const BigNum& N)
     {
         // B = kv + g^b mod N
-        BN_CTX* ctx = BN_CTX_new();
-        if (!ctx) throw std::runtime_error("Failed to create BN_CTX");
-
+        BnCtx ctx;
         BigNum kv, gb, B;
 
         // kv = k * v mod N
-        if (!BN_mod_mul(kv.get(), k.get(), v.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_mul(kv.get(), k.get(), v.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate kv");
-        }
 
         // gb = g^b mod N
-        if (!BN_mod_exp(gb.get(), g.get(), b.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(gb.get(), g.get(), b.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate g^b");
-        }
 
         // B = kv + gb mod N
-        if (!BN_mod_add(B.get(), kv.get(), gb.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_add(B.get(), kv.get(), gb.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate B");
-        }
 
-        BN_CTX_free(ctx);
         return B;
     }
 
@@ -201,54 +219,33 @@ namespace chat::auth
         const BigNum& u)
     {
         // S = (B - kg^x)^(a + ux) mod N
-        BN_CTX* ctx = BN_CTX_new();
-        if (!ctx) throw std::runtime_error("Failed to create BN_CTX");
-
+        BnCtx ctx;
         BigNum gx, kgx, base, ux, exp, S;
 
         // gx = g^x mod N
-        if (!BN_mod_exp(gx.get(), g.get(), x.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(gx.get(), g.get(), x.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate g^x");
-        }
 
         // kgx = k * gx mod N
-        if (!BN_mod_mul(kgx.get(), k.get(), gx.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_mul(kgx.get(), k.get(), gx.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate k*g^x");
-        }
 
         // base = B - kgx mod N
-        if (!BN_mod_sub(base.get(), B.get(), kgx.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_sub(base.get(), B.get(), kgx.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate B - kg^x");
-        }
 
         // ux = u * x
-        if (!BN_mul(ux.get(), u.get(), x.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mul(ux.get(), u.get(), x.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate ux");
-        }
 
         // exp = a + ux
         if (!BN_add(exp.get(), a.get(), ux.get()))
-        {
-            BN_CTX_free(ctx);
             throw std::runtime_error("Failed to calculate a + ux");
-        }
 
         // S = base^exp mod N
-        if (!BN_mod_exp(S.get(), base.get(), exp.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(S.get(), base.get(), exp.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate S");
-        }
 
-        BN_CTX_free(ctx);
         return S;
     }
 
@@ -260,33 +257,21 @@ namespace chat::auth
         const BigNum& N)
     {
         // S = (A * v^u)^b mod N
-        BN_CTX* ctx = BN_CTX_new();
-        if (!ctx) throw std::runtime_error("Failed to create BN_CTX");
-
+        BnCtx ctx;
         BigNum vu, base, S;
 
         // vu = v^u mod N
-        if (!BN_mod_exp(vu.get(), v.get(), u.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(vu.get(), v.get(), u.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate v^u");
-        }
 
         // base = A * vu mod N
-        if (!BN_mod_mul(base.get(), A.get(), vu.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_mul(base.get(), A.get(), vu.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate A * v^u");
-        }
 
         // S = base^b mod N
-        if (!BN_mod_exp(S.get(), base.get(), b.get(), N.get(), ctx))
-        {
-            BN_CTX_free(ctx);
+        if (!BN_mod_exp(S.get(), base.get(), b.get(), N.get(), ctx.get()))
             throw std::runtime_error("Failed to calculate S");
-        }
 
-        BN_CTX_free(ctx);
         return S;
     }
 
