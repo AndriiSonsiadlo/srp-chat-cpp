@@ -58,6 +58,7 @@ add_library(chat_auth STATIC
         src/auth/srp_utils.cpp
         src/auth/srp_client.cpp
         src/auth/srp_server.cpp
+        src/auth/user_store.cpp
 )
 target_link_libraries(chat_auth
         PUBLIC
@@ -163,12 +164,22 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(user_store_tests
+            tests/user_store_tests.cpp
+    )
+    target_link_libraries(user_store_tests
+            PRIVATE
+            chat_auth
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(connection_manager_tests)
     gtest_discover_tests(protocol_tests)
     gtest_discover_tests(srp_tests)
     gtest_discover_tests(types_tests)
+    gtest_discover_tests(user_store_tests)
     gtest_discover_tests(wire_tests)
 endif()
 

@@ -8,6 +8,7 @@
 
 #include "chat/auth/srp_types.hpp"
 #include "chat/auth/srp_utils.hpp"
+#include "chat/auth/user_store.hpp"
 
 namespace chat::auth
 {
@@ -23,9 +24,8 @@ namespace chat::auth
         std::unique_ptr<SRPUtils::BigNum> g_; // generator
         std::unique_ptr<SRPUtils::BigNum> k_; // multiplier k = H(N, g)
 
-        // user credentials database
-        std::unordered_map<std::string, UserCredentials> users_;
-        std::mutex users_mutex_;
+        // user credentials database (persisted via UserStore)
+        UserStore users_;
 
         // active SRP sessions
         std::unordered_map<std::string, SRPSession> sessions_;
@@ -36,7 +36,8 @@ namespace chat::auth
 
     public:
         SRPServer();
-        explicit SRPServer(const std::vector<uint8_t>& room_salt);
+        explicit SRPServer(std::string users_path);
+        SRPServer(std::string users_path, std::vector<uint8_t> room_salt);
         ~SRPServer();
 
         // Movable (mutexes are not moved, they start fresh), not copyable.
@@ -48,11 +49,10 @@ namespace chat::auth
         // user management
         bool register_user(const std::string& username, const UserCredentials& creds);
         bool user_exists(const std::string& username);
-        void remove_user(const std::string& username);
 
         // load/save user database
-        void load_users(const std::string& filepath);
-        void save_users(const std::string& filepath);
+        void load();
+        void save() const;
 
         // authentication flow
         // step 1: Initialize authentication for a user

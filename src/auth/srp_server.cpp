@@ -1,9 +1,6 @@
 #include "chat/auth/srp_server.hpp"
 #include "chat/auth/srp_types.hpp"
 #include "chat/crypto/aes_engine.hpp"
-#include <fstream>
-#include <sstream>
-#include <iomanip>
 #include <stdexcept>
 #include <chrono>
 #include <algorithm>
@@ -11,12 +8,18 @@
 namespace chat::auth
 {
     SRPServer::SRPServer()
-        : SRPServer(SRPUtils::random_bytes(SRP_SALT_SIZE))
+        : SRPServer("", SRPUtils::random_bytes(SRP_SALT_SIZE))
     {
     }
 
-    SRPServer::SRPServer(const std::vector<uint8_t>& room_salt)
-        : room_salt_(room_salt)
+    SRPServer::SRPServer(std::string users_path)
+        : SRPServer(std::move(users_path), SRPUtils::random_bytes(SRP_SALT_SIZE))
+    {
+    }
+
+    SRPServer::SRPServer(std::string users_path, std::vector<uint8_t> room_salt)
+        : users_(std::move(users_path))
+          , room_salt_(std::move(room_salt))
     {
         // initialize SRP parameters
         N_ = std::make_unique<SRPUtils::BigNum>(SRP_N_HEX_2048);
@@ -52,89 +55,28 @@ namespace chat::auth
 
     bool SRPServer::register_user(const std::string& username, const UserCredentials& creds)
     {
-        // user already exists
-        if (user_exists(username)) return false;
-
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        users_[username] = creds;
-        return true;
+        if (creds.username != username)
+            return false;
+        return users_.insert(creds);
     }
 
     bool SRPServer::user_exists(const std::string& username)
     {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        return users_.find(username) != users_.end();
+        return users_.contains(username);
     }
 
-    void SRPServer::remove_user(const std::string& username)
-    {
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        users_.erase(username);
-    }
-
-    void SRPServer::load_users(const std::string& filepath)
-    {
-        std::ifstream file(filepath);
-        if (!file.is_open())
-            return; // file doesn't exist yet
-
-        std::lock_guard<std::mutex> lock(users_mutex_);
-        users_.clear();
-
-        std::string line;
-        while (std::getline(file, line))
-        {
-            if (line.empty() || line[0] == '#')
-                continue;
-
-            std::istringstream iss(line);
-            std::string username, salt_hex, verifier_hex;
-
-            if (std::getline(iss, username, ':') &&
-                std::getline(iss, salt_hex, ':') &&
-                std::getline(iss, verifier_hex))
-            {
-                UserCredentials creds;
-                creds.username   = username;
-                creds.salt       = SRPUtils::hex_to_bytes(salt_hex);
-                creds.verifier   = SRPUtils::hex_to_bytes(verifier_hex);
-                users_[username] = creds;
-            }
-        }
-    }
-
-    void SRPServer::save_users(const std::string& filepath)
-    {
-        std::ofstream file(filepath);
-        if (!file.is_open())
-            throw std::runtime_error("Failed to open user database for writing");
-
-        std::lock_guard<std::mutex> lock(users_mutex_);
-
-        file << "# SRP User Database\n";
-        file << "# Format: username:salt_hex:verifier_hex\n";
-
-        for (const auto& [username, creds] : users_)
-        {
-            file << username << ":"
-                << SRPUtils::bytes_to_hex(creds.salt) << ":"
-                << SRPUtils::bytes_to_hex(creds.verifier) << "\n";
-        }
-    }
+    void SRPServer::load() { users_.load(); }
+    void SRPServer::save() const { users_.save(); }
 
     SRPServer::ChallengeResponse SRPServer::init_authentication(
         const std::string& username,
         const std::vector<uint8_t>& A)
     {
         // get user credentials
-        UserCredentials creds;
-        {
-            std::lock_guard<std::mutex> lock(users_mutex_);
-            auto it = users_.find(username);
-            if (it == users_.end())
-                throw std::runtime_error("User not found");
-            creds = it->second;
-        }
+        const auto found = users_.find(username);
+        if (!found.has_value())
+            throw std::runtime_error("User not found");
+        const UserCredentials creds = *found;
 
         // SRP-6a: A ≡ 0 (mod N) would force S = 0. Refuse it.
         const SRPUtils::BigNum A_bn(A);

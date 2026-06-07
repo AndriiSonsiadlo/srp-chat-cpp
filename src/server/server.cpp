@@ -24,19 +24,19 @@ namespace chat::server
                   static_cast<boost::asio::ip::port_type>(port)
               )
           ),
-          srp_server_(std::make_unique<auth::SRPServer>()),
+          srp_server_(std::make_unique<auth::SRPServer>("users.db")),
           connection_manager_(std::make_unique<ConnectionManager>()),
           next_user_id_(1),
           running_(false),
           port_(port)
     {
-        srp_server_->load_users("users.db");
+        srp_server_->load();
     }
 
     Server::~Server()
     {
         if (srp_server_)
-            srp_server_->save_users("users.db");
+            srp_server_->save();
         stop();
     }
 
@@ -202,7 +202,7 @@ namespace chat::server
             conn->send_packet(Protocol::encode(MessageType::SRP_REGISTER_ACK));
 
             // save the database immediately
-            srp_server_->save_users("users.db");
+            srp_server_->save();
         }
         else {
             conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Registration failed"}));
