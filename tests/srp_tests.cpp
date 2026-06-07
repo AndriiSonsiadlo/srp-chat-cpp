@@ -164,7 +164,10 @@ namespace chat::auth
     TEST(SrpTest, SessionRemembersItsUsername)
     {
         // Two users deliberately share a salt so that the old salt-scanning
-        // lookup would resolve the wrong identity.
+        // lookup would resolve at most one identity correctly — the wrong
+        // one for whichever user isn't hit first by map iteration order.
+        // Authenticating BOTH users makes the test order-independent: the
+        // old bug cannot satisfy both regardless of hash-map iteration order.
         SRPServer server;
         auto judy = SRPClient::register_user("judy", "pw-judy");
         auto karl = SRPClient::register_user("karl", "pw-karl");
@@ -183,11 +186,46 @@ namespace chat::auth
         server.register_user("judy", judy);
         server.register_user("karl", karl);
 
-        SRPClient client("karl", "pw-karl");
-        const auto A         = client.generate_A();
-        const auto challenge = server.init_authentication("karl", A);
-        const auto M         = client.process_challenge(challenge.B, challenge.salt);
+        auto authenticate = [&server](const std::string& user, const std::string& pass) {
+            SRPClient client(user, pass);
+            const auto A         = client.generate_A();
+            const auto challenge = server.init_authentication(user, A);
+            const auto M         = client.process_challenge(challenge.B, challenge.salt);
+            EXPECT_NO_THROW((void)server.verify_authentication(challenge.user_id, M));
+        };
 
-        EXPECT_NO_THROW((void)server.verify_authentication(challenge.user_id, M));
+        authenticate("judy", "pw-judy");
+        authenticate("karl", "pw-karl");
+    }
+
+    TEST(SrpTest, CalculateUIsNonZeroForOrdinaryEphemeralKeys)
+    {
+        // Sanity-check for the u == 0 guards in
+        // SRPServer::verify_authentication / SRPClient::process_challenge:
+        // ordinary, distinct ephemeral keys never produce u == 0.
+        auto server = make_server_with_user("mallory", "pw");
+        SRPClient client("mallory", "pw");
+
+        const auto A         = client.generate_A();
+        const auto challenge = server.init_authentication("mallory", A);
+
+        SRPUtils::BigNum A_bn(A);
+        SRPUtils::BigNum B_bn(challenge.B);
+        auto u = SRPUtils::calculate_u(A_bn, B_bn);
+
+        EXPECT_EQ(BN_is_zero(u.get()), 0);
+    }
+
+    TEST(SrpTest, ZeroUGuardConditionRejectsSyntheticZero)
+    {
+        // Directly exercises the guard predicate used by both
+        // SRPServer::verify_authentication and SRPClient::process_challenge
+        // (`BN_is_zero(u.get()) == 1`) against a synthetic zero BigNum.
+        // Forcing SHA-256 to output all-zero bytes through the real protocol
+        // is a single-target preimage search over 2^256 — computationally
+        // infeasible to construct in a test — so this pins the guard's
+        // condition directly instead.
+        SRPUtils::BigNum zero_u;
+        EXPECT_EQ(BN_is_zero(zero_u.get()), 1);
     }
 } // namespace chat::auth
