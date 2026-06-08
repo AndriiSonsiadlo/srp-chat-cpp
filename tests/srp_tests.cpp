@@ -268,6 +268,21 @@ namespace chat::auth
                   server.init_authentication("ghost-b", b.generate_A()).salt);
     }
 
+    TEST(SrpTest, RepeatedBadProofsKeepFailing)
+    {
+        auto server = make_server_with_user("mallory", "real-password");
+
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            SRPClient client("mallory", "guess-" + std::to_string(attempt));
+            const auto A         = client.generate_A();
+            const auto challenge = server.init_authentication("mallory", A);
+            const auto M         = client.process_challenge(challenge.B, challenge.salt);
+
+            EXPECT_THROW((void)server.verify_authentication(challenge.user_id, M), std::runtime_error);
+            EXPECT_FALSE(server.is_session_valid(challenge.user_id));
+        }
+    }
+
     TEST(SrpTest, HmacIsDeterministicAndKeyDependent)
     {
         const std::vector<uint8_t> key_one(32, 0x01);

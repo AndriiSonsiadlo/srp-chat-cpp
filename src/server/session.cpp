@@ -263,64 +263,75 @@ namespace chat::server
             co_return std::nullopt;
         }
 
-        send(Protocol::encode(MessageType::SRP_CHALLENGE, SrpChallengeMsg{
-                                  challenge.user_id,
-                                  auth::SRPUtils::bytes_to_base64(challenge.B),
-                                  auth::SRPUtils::bytes_to_base64(challenge.salt),
-                                  auth::SRPUtils::bytes_to_base64(challenge.room_salt)}));
-
-        auto [response_type, response_payload] = co_await ProtocolHelpers::async_receive_packet(socket_);
-        if (response_type != MessageType::SRP_RESPONSE) {
-            fail("Expected SRP_RESPONSE", "handshake: wrong response message");
-            co_return std::nullopt;
-        }
-
-        const auto response = Protocol::decode<SrpResponseMsg>(response_payload);
-        if (response.user_id != challenge.user_id) {
-            fail("Authentication failed", "handshake: user id mismatch");
-            co_return std::nullopt;
-        }
-
         // Note: the "already logged in" check deliberately happens *after* proof
-        // verification, below. Checking it here would tell an unauthenticated
-        // caller whether a given account exists and is connected.
-        try {
-            const auto verify = server_.srp().verify_authentication(
-                response.user_id, auth::SRPUtils::base64_to_bytes(response.M_b64));
+        // verification, in finish_login() below. Checking it earlier would tell an
+        // unauthenticated caller whether a given account exists and is connected.
+        while (auth_attempts_ < kMaxAuthAttempts) {
+            send(Protocol::encode(MessageType::SRP_CHALLENGE, SrpChallengeMsg{
+                                      challenge.user_id,
+                                      auth::SRPUtils::bytes_to_base64(challenge.B),
+                                      auth::SRPUtils::bytes_to_base64(challenge.salt),
+                                      auth::SRPUtils::bytes_to_base64(challenge.room_salt)}));
 
-            send(Protocol::encode(MessageType::SRP_SUCCESS,
-                                  SrpSuccessMsg{auth::SRPUtils::bytes_to_base64(verify.H_AMK)}));
-        }
-        catch (const std::exception& e) {
-            ++auth_attempts_;
-            fail("Authentication failed",
-                 "handshake: proof rejected (attempt " + std::to_string(auth_attempts_)
-                     + " of " + std::to_string(kMaxAuthAttempts) + "): " + e.what());
-            co_return std::nullopt;
+            auto [response_type, response_payload] =
+                co_await ProtocolHelpers::async_receive_packet(socket_);
+
+            if (response_type != MessageType::SRP_RESPONSE) {
+                fail("Expected SRP_RESPONSE", "handshake: wrong response message");
+                co_return std::nullopt;
+            }
+
+            const auto response = Protocol::decode<SrpResponseMsg>(response_payload);
+            if (response.user_id != challenge.user_id) {
+                fail("Authentication failed", "handshake: user id mismatch");
+                co_return std::nullopt;
+            }
+
+            try {
+                const auto verify = server_.srp().verify_authentication(
+                    response.user_id, auth::SRPUtils::base64_to_bytes(response.M_b64));
+
+                send(Protocol::encode(MessageType::SRP_SUCCESS,
+                                      SrpSuccessMsg{auth::SRPUtils::bytes_to_base64(verify.H_AMK)}));
+
+                co_return co_await finish_login(init.username, response.user_id);
+            }
+            catch (const std::exception& e) {
+                ++auth_attempts_;
+                log::warn(remote_ + ": proof rejected (attempt " + std::to_string(auth_attempts_)
+                          + " of " + std::to_string(kMaxAuthAttempts) + "): " + e.what());
+                send(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Authentication failed"}));
+            }
         }
 
-        auto key = server_.srp().derive_session_key(response.user_id);
+        log::warn(remote_ + ": authentication attempt budget exhausted");
+        co_return std::nullopt;
+    }
+
+    awaitable<std::optional<std::string>> Session::finish_login(
+        const std::string& username, const std::string& user_id)
+    {
+        auto key = server_.srp().derive_session_key(user_id);
         if (key.size() != crypto::AESEngine::KEY_SIZE) {
             fail("Authentication failed", "handshake: derived key has wrong size");
             co_return std::nullopt;
         }
 
         // Atomic: no window for a second login of the same account to slip in.
-        if (!server_.room().try_join(response.user_id, init.username, shared_from_this(),
-                                     std::move(key))) {
-            fail("User already logged in", "handshake: duplicate login for " + init.username);
+        if (!server_.room().try_join(user_id, username, shared_from_this(), std::move(key))) {
+            fail("User already logged in", "handshake: duplicate login for " + username);
             co_return std::nullopt;
         }
-        username_ = init.username;
+        username_ = username;
 
         log::info("user '" + username_ + "' authenticated from " + remote_);
 
-        send(server_.room().init_packet_for(response.user_id));
+        send(server_.room().init_packet_for(user_id));
         server_.room().broadcast_packet(
-            Protocol::encode(MessageType::USER_JOINED, UserJoinedMsg{username_, response.user_id}),
-            response.user_id);
+            Protocol::encode(MessageType::USER_JOINED, UserJoinedMsg{username_, user_id}),
+            user_id);
 
-        co_return response.user_id;
+        co_return user_id;
     }
 
     awaitable<void> Session::message_loop(const std::string& user_id)

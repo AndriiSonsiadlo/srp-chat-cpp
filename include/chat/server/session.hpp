@@ -44,6 +44,11 @@ namespace chat::server
 
         // Returns the authenticated user id, or nullopt if the handshake failed.
         boost::asio::awaitable<std::optional<std::string>> handshake();
+        // Post-verification work: duplicate-login check, key derivation, room join,
+        // INIT, and the USER_JOINED broadcast. Returns nullopt on duplicate login or
+        // a malformed derived key, in which case the caller must not retry.
+        boost::asio::awaitable<std::optional<std::string>> finish_login(
+            const std::string& username, const std::string& user_id);
         boost::asio::awaitable<void> message_loop(const std::string& user_id);
         boost::asio::awaitable<bool> handle_register(const std::vector<uint8_t>& payload);
 
