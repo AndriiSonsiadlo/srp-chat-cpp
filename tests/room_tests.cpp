@@ -49,8 +49,8 @@ namespace chat::server
 
         void join_both()
         {
-            room_.join("user_a", "alice", alice_, test_key(0xAA));
-            room_.join("user_b", "bob", bob_, test_key(0xBB));
+            room_.try_join("user_a", "alice", alice_, test_key(0xAA));
+            room_.try_join("user_b", "bob", bob_, test_key(0xBB));
         }
     };
 
@@ -64,6 +64,16 @@ namespace chat::server
         EXPECT_EQ(room_.username_of("user_b"), "bob");
         EXPECT_EQ(room_.username_of("nobody"), "");
         EXPECT_EQ(room_.active_users().size(), 2u);
+    }
+
+    TEST_F(RoomTest, TryJoinRefusesDuplicateUsername)
+    {
+        EXPECT_TRUE(room_.try_join("user_a", "alice", alice_, test_key(0xAA)));
+
+        // Same username, different user_id: must be refused, room untouched.
+        EXPECT_FALSE(room_.try_join("user_b", "alice", bob_, test_key(0xBB)));
+        EXPECT_EQ(room_.size(), 1u);
+        EXPECT_EQ(room_.username_of("user_b"), "");
     }
 
     TEST_F(RoomTest, LeaveRemovesAndCloses)
@@ -113,11 +123,11 @@ namespace chat::server
 
     TEST_F(RoomTest, HistoryIsEncryptedForTheJoiningUserAndKeepsTimestamps)
     {
-        room_.join("user_a", "alice", alice_, test_key(0xAA));
+        room_.try_join("user_a", "alice", alice_, test_key(0xAA));
         room_.record_and_broadcast("alice", "first");
         room_.record_and_broadcast("alice", "second");
 
-        room_.join("user_b", "bob", bob_, test_key(0xBB));
+        room_.try_join("user_b", "bob", bob_, test_key(0xBB));
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("user_b")));
 
         ASSERT_EQ(init.messages.size(), 2u);
@@ -136,11 +146,11 @@ namespace chat::server
 
     TEST_F(RoomTest, HistoryIsCappedAtOneHundredMessages)
     {
-        room_.join("user_a", "alice", alice_, test_key(0xAA));
+        room_.try_join("user_a", "alice", alice_, test_key(0xAA));
         for (int i = 0; i < 150; ++i)
             room_.record_and_broadcast("alice", "msg " + std::to_string(i));
 
-        room_.join("user_b", "bob", bob_, test_key(0xBB));
+        room_.try_join("user_b", "bob", bob_, test_key(0xBB));
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("user_b")));
 
         EXPECT_EQ(init.messages.size(), 100u);

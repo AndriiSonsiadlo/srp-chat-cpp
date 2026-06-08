@@ -108,6 +108,12 @@ namespace chat::server
 
             try {
                 co_await ProtocolHelpers::async_send_packet(socket_, packet);
+
+                // A user who is reading broadcasts but not typing is still active.
+                // Only post-handshake, so delivering a challenge cannot promote a
+                // client from the handshake deadline to the (longer) idle one.
+                if (!username_.empty())
+                    extend_deadline();
             }
             catch (const std::exception&) {
                 hard_close();
@@ -157,15 +163,28 @@ namespace chat::server
                 log::info(remote_ + ": connection ended: " + e.what());
             }
 
-            server_.room().leave(*user_id);
-            server_.srp().clear_session(*user_id);
-            server_.room().broadcast_packet(
-                Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username_}));
-            log::info("user '" + username_ + "' disconnected");
+            // This coroutine is detached: anything thrown from here would reach the
+            // io_context uncaught and terminate the process, killing every other
+            // session over one failed cleanup.
+            try {
+                server_.room().leave(*user_id);
+                server_.srp().clear_session(*user_id);
+                server_.room().broadcast_packet(
+                    Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username_}));
+                log::info("user '" + username_ + "' disconnected");
+            }
+            catch (const std::exception& e) {
+                log::error(remote_ + ": cleanup failed: " + e.what());
+            }
         }
 
-        server_.on_session_closed();
-        close();
+        try {
+            server_.on_session_closed();
+            close();
+        }
+        catch (const std::exception& e) {
+            log::error(remote_ + ": teardown failed: " + e.what());
+        }
     }
 
     awaitable<bool> Session::handle_register(const std::vector<uint8_t>& payload)
@@ -262,11 +281,9 @@ namespace chat::server
             co_return std::nullopt;
         }
 
-        if (server_.room().username_online(init.username)) {
-            fail("User already logged in", "handshake: duplicate login for " + init.username);
-            co_return std::nullopt;
-        }
-
+        // Note: the "already logged in" check deliberately happens *after* proof
+        // verification, below. Checking it here would tell an unauthenticated
+        // caller whether a given account exists and is connected.
         try {
             const auto verify = server_.srp().verify_authentication(
                 response.user_id, auth::SRPUtils::base64_to_bytes(response.M_b64));
@@ -288,8 +305,13 @@ namespace chat::server
             co_return std::nullopt;
         }
 
+        // Atomic: no window for a second login of the same account to slip in.
+        if (!server_.room().try_join(response.user_id, init.username, shared_from_this(),
+                                     std::move(key))) {
+            fail("User already logged in", "handshake: duplicate login for " + init.username);
+            co_return std::nullopt;
+        }
         username_ = init.username;
-        server_.room().join(response.user_id, username_, shared_from_this(), std::move(key));
 
         log::info("user '" + username_ + "' authenticated from " + remote_);
 

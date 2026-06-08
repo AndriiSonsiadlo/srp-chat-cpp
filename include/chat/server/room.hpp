@@ -25,10 +25,13 @@ namespace chat::server
     public:
         static constexpr size_t kMaxHistory = 100;
 
-        void join(const std::string& user_id,
-                  const std::string& username,
-                  std::shared_ptr<Sink> sink,
-                  std::vector<uint8_t> key);
+        // Atomic check-and-insert: refuses (returns false, room untouched) if the
+        // username is already present. Checking username_online() separately and
+        // then joining would leave a window for two logins of the same account.
+        bool try_join(const std::string& user_id,
+                      const std::string& username,
+                      std::shared_ptr<Sink> sink,
+                      std::vector<uint8_t> key);
         void leave(const std::string& user_id);
 
         [[nodiscard]] bool username_online(const std::string& username) const;

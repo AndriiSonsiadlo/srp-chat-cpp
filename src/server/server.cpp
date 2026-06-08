@@ -22,7 +22,10 @@ namespace chat::server
 
     Server::Server(ServerConfig config)
         : config_(std::move(config))
-          , acceptor_(io_context_,
+          // The acceptor lives on its own strand, so accept_loop() and the close()
+          // that stop() posts to that same executor can never run concurrently —
+          // a socket acceptor is not safe for concurrent use across pool threads.
+          , acceptor_(boost::asio::make_strand(io_context_),
                       boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), config_.port))
           , srp_server_(std::make_unique<auth::SRPServer>(config_.users_db))
     {
@@ -39,7 +42,7 @@ namespace chat::server
         log::info("listening on port " + std::to_string(config_.port)
                   + " (max " + std::to_string(config_.max_connections) + " connections)");
 
-        co_spawn(io_context_, [this] { return accept_loop(); }, detached);
+        co_spawn(acceptor_.get_executor(), [this] { return accept_loop(); }, detached);
         co_spawn(io_context_, [this] { return session_sweeper(); }, detached);
 
         // Signals are delivered on the io_context, not in a signal handler, so
@@ -72,8 +75,12 @@ namespace chat::server
 
     void Server::stop()
     {
-        boost::system::error_code ec;
-        acceptor_.close(ec);
+        // Called from any thread (signal handler, destructor): hop onto the
+        // acceptor's strand rather than touching it cross-thread.
+        boost::asio::post(acceptor_.get_executor(), [this] {
+            boost::system::error_code ec;
+            acceptor_.close(ec);
+        });
         io_context_.stop();
     }
 
@@ -81,13 +88,28 @@ namespace chat::server
     {
         while (acceptor_.is_open()) {
             boost::system::error_code ec;
+            // Peer sockets are bound to the io_context, not to the acceptor's
+            // strand — each Session makes its own strand.
             auto socket = co_await acceptor_.async_accept(
-                boost::asio::redirect_error(use_awaitable, ec));
+                io_context_, boost::asio::redirect_error(use_awaitable, ec));
+
+            // operation_aborted is the only "we meant it" error: stop() closed us.
+            if (ec == boost::asio::error::operation_aborted || !acceptor_.is_open())
+                co_return;
 
             if (ec) {
-                if (acceptor_.is_open())
-                    log::warn("accept failed: " + ec.message());
-                co_return;
+                // Transient (EMFILE, ECONNABORTED, ...): keep listening. Back off
+                // briefly so a persistent failure cannot spin the CPU.
+                log::warn("accept failed: " + ec.message());
+
+                boost::asio::steady_timer backoff(co_await boost::asio::this_coro::executor);
+                backoff.expires_after(std::chrono::milliseconds(100));
+
+                boost::system::error_code wait_ec;
+                co_await backoff.async_wait(boost::asio::redirect_error(use_awaitable, wait_ec));
+                if (wait_ec)
+                    co_return;
+                continue;
             }
 
             if (open_connections_.load() >= config_.max_connections) {

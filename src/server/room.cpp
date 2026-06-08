@@ -20,13 +20,21 @@ namespace chat::server
         }
     }
 
-    void Room::join(const std::string& user_id,
-                    const std::string& username,
-                    std::shared_ptr<Sink> sink,
-                    std::vector<uint8_t> key)
+    bool Room::try_join(const std::string& user_id,
+                        const std::string& username,
+                        std::shared_ptr<Sink> sink,
+                        std::vector<uint8_t> key)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+
+        const bool taken = std::ranges::any_of(members_, [&username](const auto& entry) {
+            return entry.second.username == username;
+        });
+        if (taken)
+            return false;
+
         members_[user_id] = Member{std::move(sink), username, std::move(key)};
+        return true;
     }
 
     void Room::leave(const std::string& user_id)
