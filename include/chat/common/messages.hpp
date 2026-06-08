@@ -13,6 +13,9 @@ namespace chat
         std::string username;
         // Base64-encoded AES-GCM payload (IV || ciphertext || tag), sealed with
         // the receiving user's key. History is never sent in the clear.
+        // (as of the Room-wiring task, chat_server/chat_client still send this in
+        // the clear via a temporary shim — see the ponytail: comments in
+        // server.cpp/client.cpp — until Task 8 routes it through Room::init_packet_for)
         std::string ciphertext_b64;
         int64_t timestamp_ms;
 
