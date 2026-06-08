@@ -283,6 +283,32 @@ namespace chat::auth
         }
     }
 
+    TEST(SrpTest, GoodProofSucceedsAfterPriorBadProofsOnSameConnection)
+    {
+        // This is the invariant the session's retry loop depends on: a rejected
+        // proof must not poison the account's ability to authenticate on a later
+        // attempt over the same connection. Each attempt re-fetches a challenge
+        // (fresh server ephemeral B), exactly like Session::handshake()'s loop.
+        auto server = make_server_with_user("nathan", "real-password");
+        SRPClient client("nathan", "real-password");
+        const auto A = client.generate_A();
+
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const auto challenge = server.init_authentication("nathan", A);
+            auto bad_M           = client.process_challenge(challenge.B, challenge.salt);
+            bad_M.back() ^= 0xFF; // corrupt the proof so this attempt is rejected
+
+            EXPECT_THROW((void)server.verify_authentication(challenge.user_id, bad_M),
+                         std::runtime_error);
+        }
+
+        const auto challenge = server.init_authentication("nathan", A);
+        const auto M         = client.process_challenge(challenge.B, challenge.salt);
+
+        EXPECT_NO_THROW((void)server.verify_authentication(challenge.user_id, M));
+        EXPECT_TRUE(server.is_session_valid(challenge.user_id));
+    }
+
     TEST(SrpTest, HmacIsDeterministicAndKeyDependent)
     {
         const std::vector<uint8_t> key_one(32, 0x01);

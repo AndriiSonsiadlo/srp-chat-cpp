@@ -252,21 +252,26 @@ namespace chat::server
             co_return std::nullopt;
         }
 
-        auth::SRPServer::ChallengeResponse challenge;
-        try {
-            challenge = server_.srp().init_authentication(
-                init.username, auth::SRPUtils::base64_to_bytes(init.A_b64));
-        }
-        catch (const std::exception& e) {
-            // Only the SRP safety checks reach here; an unknown user gets a decoy.
-            fail("Authentication failed", std::string("handshake: ") + e.what());
-            co_return std::nullopt;
-        }
+        const auto A = auth::SRPUtils::base64_to_bytes(init.A_b64);
 
         // Note: the "already logged in" check deliberately happens *after* proof
         // verification, in finish_login() below. Checking it earlier would tell an
         // unauthenticated caller whether a given account exists and is connected.
         while (auth_attempts_ < kMaxAuthAttempts) {
+            auth::SRPServer::ChallengeResponse challenge;
+            try {
+                // Fresh server ephemeral (B) each attempt: SRP's security proof
+                // assumes a single-use B, so replaying the same challenge across
+                // retries would let a rejected attempt leak information about the
+                // one that follows it.
+                challenge = server_.srp().init_authentication(init.username, A);
+            }
+            catch (const std::exception& e) {
+                // Only the SRP safety checks reach here; an unknown user gets a decoy.
+                fail("Authentication failed", std::string("handshake: ") + e.what());
+                co_return std::nullopt;
+            }
+
             send(Protocol::encode(MessageType::SRP_CHALLENGE, SrpChallengeMsg{
                                       challenge.user_id,
                                       auth::SRPUtils::bytes_to_base64(challenge.B),
@@ -287,21 +292,26 @@ namespace chat::server
                 co_return std::nullopt;
             }
 
+            std::optional<auth::SRPServer::VerifyResponse> verify;
             try {
-                const auto verify = server_.srp().verify_authentication(
+                verify = server_.srp().verify_authentication(
                     response.user_id, auth::SRPUtils::base64_to_bytes(response.M_b64));
-
-                send(Protocol::encode(MessageType::SRP_SUCCESS,
-                                      SrpSuccessMsg{auth::SRPUtils::bytes_to_base64(verify.H_AMK)}));
-
-                co_return co_await finish_login(init.username, response.user_id);
             }
             catch (const std::exception& e) {
                 ++auth_attempts_;
                 log::warn(remote_ + ": proof rejected (attempt " + std::to_string(auth_attempts_)
                           + " of " + std::to_string(kMaxAuthAttempts) + "): " + e.what());
                 send(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Authentication failed"}));
+                continue;
             }
+
+            // Everything from here on runs only after a genuinely accepted proof,
+            // so nothing below can be mistaken for (or mis-spend the budget of) a
+            // rejected attempt, and try_join (inside finish_login) runs at most once.
+            send(Protocol::encode(MessageType::SRP_SUCCESS,
+                                  SrpSuccessMsg{auth::SRPUtils::bytes_to_base64(verify->H_AMK)}));
+
+            co_return co_await finish_login(init.username, response.user_id);
         }
 
         log::warn(remote_ + ": authentication attempt budget exhausted");
