@@ -191,8 +191,21 @@ namespace chat::client
             case MessageType::INIT: {
                 auto msg = Protocol::decode<InitMsg>(payload);
 
+                // ponytail: history is still plaintext on the wire here (matches
+                // server.cpp's current send path); Task 8 decrypts ciphertext_b64
+                // with the client's session key instead of treating it as plaintext.
+                std::vector<Message> history;
+                history.reserve(msg.messages.size());
+                for (const auto& entry : msg.messages) {
+                    history.push_back(Message{
+                        entry.username,
+                        entry.ciphertext_b64,
+                        std::chrono::system_clock::time_point(
+                            std::chrono::milliseconds(entry.timestamp_ms))});
+                }
+
                 lock      = std::unique_lock<std::mutex>(messages_mutex_);
-                messages_ = std::move(msg.messages);
+                messages_ = std::move(history);
                 lock.unlock();
 
                 lock   = std::unique_lock<std::mutex>(users_mutex_);

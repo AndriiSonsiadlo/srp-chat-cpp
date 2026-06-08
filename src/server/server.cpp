@@ -144,9 +144,21 @@ namespace chat::server
             {
                 std::lock_guard<std::mutex> lock(message_mutex_);
                 auto users = connection_manager_->get_active_users();
+
+                // ponytail: still plaintext history here (matches pre-existing leak);
+                // Task 8 replaces this whole send path with Room::init_packet_for,
+                // which seals each entry under the recipient's own key.
+                std::vector<HistoryEntry> history;
+                history.reserve(message_history_.size());
+                for (const auto& m : message_history_) {
+                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        m.timestamp.time_since_epoch()).count();
+                    history.push_back(HistoryEntry{m.username, m.text, ms});
+                }
+
                 conn->send_packet(Protocol::encode(
                     MessageType::INIT,
-                    InitMsg{message_history_, std::move(users)}));
+                    InitMsg{std::move(history), std::move(users)}));
             }
 
             connection_manager_->broadcast(

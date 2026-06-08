@@ -8,25 +8,21 @@
 
 namespace chat
 {
-    struct ConnectMsg
+    struct HistoryEntry
     {
         std::string username;
+        // Base64-encoded AES-GCM payload (IV || ciphertext || tag), sealed with
+        // the receiving user's key. History is never sent in the clear.
+        std::string ciphertext_b64;
+        int64_t timestamp_ms;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(username); }
-        [[nodiscard]] auto as_tuple() { return std::tie(username); }
-    };
-
-    struct ConnectAckMsg
-    {
-        std::string user_id;
-
-        [[nodiscard]] auto as_tuple() const { return std::tie(user_id); }
-        [[nodiscard]] auto as_tuple() { return std::tie(user_id); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(username, ciphertext_b64, timestamp_ms); }
+        [[nodiscard]] auto as_tuple() { return std::tie(username, ciphertext_b64, timestamp_ms); }
     };
 
     struct InitMsg
     {
-        std::vector<Message> messages;
+        std::vector<HistoryEntry> messages;
         std::vector<User> users;
 
         [[nodiscard]] auto as_tuple() const { return std::tie(messages, users); }

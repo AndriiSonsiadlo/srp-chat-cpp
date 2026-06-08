@@ -85,24 +85,5 @@ namespace chat
         std::string username;
         std::string text;
         std::chrono::system_clock::time_point timestamp;
-
-        // NOTE: as_tuple() is retained here, despite the Task 2 brief calling for
-        // its removal, because InitMsg::messages (std::vector<Message>) is still
-        // serialized directly by Protocol in this task -- deleting it makes
-        // Protocol::encode/decode<InitMsg> (and thus server.cpp's INIT send path,
-        // plus the brief's own wire_tests.cpp OversizedVectorCountIsRejected test)
-        // fail to compile, since read_field<vector<T>>'s body unconditionally
-        // instantiates deserialize_object<T> regardless of the runtime early-throw
-        // path. Task 7 (InitMsg::messages -> vector<HistoryEntry>) is the point
-        // where Message can safely lose serialization support.
-        [[nodiscard]] auto as_tuple() const
-        {
-            return std::tie(username, text);
-        }
-
-        [[nodiscard]] auto as_tuple()
-        {
-            return std::tie(username, text);
-        }
     };
 } // namespace chat

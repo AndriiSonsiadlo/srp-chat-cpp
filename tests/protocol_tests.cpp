@@ -135,7 +135,7 @@ namespace chat
 
     TEST_F(ProtocolTest, EncodeDecodeInitEmpty)
     {
-        std::vector<Message> messages;
+        std::vector<HistoryEntry> messages;
         std::vector<User> users;
 
         auto packet = Protocol::encode(MessageType::INIT, InitMsg{messages, users});
@@ -152,9 +152,9 @@ namespace chat
 
     TEST_F(ProtocolTest, EncodeDecodeInitWithData)
     {
-        std::vector<Message> messages = {
-            {"alice", "Hello", std::chrono::system_clock::now()},
-            {"bob", "Hi there", std::chrono::system_clock::now()}
+        std::vector<HistoryEntry> messages = {
+            {"alice", "Hello", 1000},
+            {"bob", "Hi there", 2000}
         };
         std::vector<User> users = {
             {"alice", "user_1"},
@@ -169,9 +169,11 @@ namespace chat
 
         ASSERT_EQ(decoded_messages.size(), 2);
         EXPECT_EQ(decoded_messages[0].username, "alice");
-        EXPECT_EQ(decoded_messages[0].text, "Hello");
+        EXPECT_EQ(decoded_messages[0].ciphertext_b64, "Hello");
+        EXPECT_EQ(decoded_messages[0].timestamp_ms, 1000);
         EXPECT_EQ(decoded_messages[1].username, "bob");
-        EXPECT_EQ(decoded_messages[1].text, "Hi there");
+        EXPECT_EQ(decoded_messages[1].ciphertext_b64, "Hi there");
+        EXPECT_EQ(decoded_messages[1].timestamp_ms, 2000);
 
         ASSERT_EQ(decoded_users.size(), 3);
         EXPECT_EQ(decoded_users[0].username, "alice");
