@@ -297,9 +297,19 @@ namespace chat::client
     void Client::srp_authenticate()
     {
         std::unique_lock<std::mutex> ui_lock(ui_mutex_);
-        std::cout << "Enter password: ";
-        ui_lock.unlock();
-        std::getline(std::cin, password_);
+
+        // srp_register() (when register_first_ is set) already prompted for and
+        // captured the password immediately before this call — don't ask twice.
+        if (password_.empty())
+        {
+            std::cout << "Enter password: ";
+            ui_lock.unlock();
+            std::getline(std::cin, password_);
+        }
+        else
+        {
+            ui_lock.unlock();
+        }
 
         srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
 
@@ -395,9 +405,6 @@ namespace chat::client
         std::cout << "Enter password: ";
         ui_lock.unlock();
         std::getline(std::cin, password_);
-
-        // rebuild srp_client_ so the retry handshake uses the password just registered
-        srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
 
         // generate credentials
         auto creds = auth::SRPClient::register_user(username_, password_);
