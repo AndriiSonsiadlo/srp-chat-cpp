@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
             return EXIT_FAILURE;
         }
 
-        chat::client::Client client(host, port, username);
+        chat::client::Client client(host, port, username, false);
         client.run();
 
         return EXIT_SUCCESS;

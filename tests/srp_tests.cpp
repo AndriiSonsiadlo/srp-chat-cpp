@@ -223,4 +223,59 @@ namespace chat::auth
 
         EXPECT_NO_THROW(SRPUtils::reject_zero_u(u));
     }
+
+    TEST(SrpTest, UnknownUserStillGetsAWellFormedChallenge)
+    {
+        auto server = make_server_with_user("known", "pw");
+
+        SRPClient client("ghost", "any-password");
+        const auto A = client.generate_A();
+
+        // No throw, and the challenge is indistinguishable in shape from a real one.
+        SRPServer::ChallengeResponse challenge;
+        ASSERT_NO_THROW(challenge = server.init_authentication("ghost", A));
+
+        EXPECT_FALSE(challenge.user_id.empty());
+        EXPECT_FALSE(challenge.B.empty());
+        EXPECT_EQ(challenge.salt.size(), SRP_SALT_SIZE);
+
+        // It fails at proof verification, exactly like a wrong password does.
+        const auto M = client.process_challenge(challenge.B, challenge.salt);
+        EXPECT_THROW((void)server.verify_authentication(challenge.user_id, M), std::runtime_error);
+    }
+
+    TEST(SrpTest, FakeSaltIsStableAcrossProbes)
+    {
+        SRPServer server;
+        SRPClient probe_one("ghost", "pw");
+        SRPClient probe_two("ghost", "pw");
+
+        const auto first  = server.init_authentication("ghost", probe_one.generate_A());
+        const auto second = server.init_authentication("ghost", probe_two.generate_A());
+
+        // A real account returns the same salt every time; the decoy must too,
+        // or repeated probing distinguishes it.
+        EXPECT_EQ(first.salt, second.salt);
+    }
+
+    TEST(SrpTest, FakeSaltDiffersBetweenUsernames)
+    {
+        SRPServer server;
+        SRPClient a("ghost-a", "pw");
+        SRPClient b("ghost-b", "pw");
+
+        EXPECT_NE(server.init_authentication("ghost-a", a.generate_A()).salt,
+                  server.init_authentication("ghost-b", b.generate_A()).salt);
+    }
+
+    TEST(SrpTest, HmacIsDeterministicAndKeyDependent)
+    {
+        const std::vector<uint8_t> key_one(32, 0x01);
+        const std::vector<uint8_t> key_two(32, 0x02);
+        const std::vector<uint8_t> data{'h', 'i'};
+
+        EXPECT_EQ(SRPUtils::hmac_sha256(key_one, data), SRPUtils::hmac_sha256(key_one, data));
+        EXPECT_NE(SRPUtils::hmac_sha256(key_one, data), SRPUtils::hmac_sha256(key_two, data));
+        EXPECT_EQ(SRPUtils::hmac_sha256(key_one, data).size(), 32u);
+    }
 } // namespace chat::auth

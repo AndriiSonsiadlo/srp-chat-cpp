@@ -4,6 +4,7 @@
 #include <thread>
 #include <iomanip>
 #include <sstream>
+#include <tuple>
 
 #include "chat/crypto/aes_engine.hpp"
 #include "chat/common/messages.hpp"
@@ -46,47 +47,37 @@ namespace chat::server
             auth::SRPServer::ChallengeResponse challenge;
             std::string username;
 
-            while (true) {
-                // wait for SRP_INIT or SRP_REGISTER
-                auto [type, msg] = conn->receive_packet();
+            auto first_packet = conn->receive_packet();
+            MessageType type = first_packet.first;
+            std::vector<uint8_t> msg = std::move(first_packet.second);
 
-                if (type == MessageType::SRP_REGISTER) {
-                    handle_srp_register(conn, msg);
-                    continue;
-                }
-
-                if (type != MessageType::SRP_INIT) {
-                    conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Expected SRP_INIT"}));
-                    return std::nullopt;
-                }
-
-                // parse SRP_INIT
-                auto init = Protocol::decode<SrpInitMsg>(msg);
-                if (init.protocol_version != kProtocolVersion) {
-                    conn->send_packet(Protocol::encode(
-                        MessageType::ERROR_MSG,
-                        ErrorMsg{"Unsupported protocol version " + std::to_string(init.protocol_version)
-                                 + "; server speaks version " + std::to_string(kProtocolVersion)}));
-                    return std::nullopt;
-                }
-
-                if (init.username.empty() || init.A_b64.empty()) {
-                    conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid SRP_INIT"}));
-                    return std::nullopt;
-                }
-
-                auto A = auth::SRPUtils::base64_to_bytes(init.A_b64);
-
-                // initialize SRP authentication
-                try {
-                    challenge = srp_server_->init_authentication(init.username, A);
-                    username  = std::move(init.username);
-                    break;
-                }
-                catch (const std::exception&) {
-                    conn->send_packet(Protocol::encode(MessageType::SRP_USER_NOT_FOUND));
-                }
+            if (type == MessageType::SRP_REGISTER) {
+                handle_srp_register(conn, msg);
+                std::tie(type, msg) = conn->receive_packet();
             }
+
+            if (type != MessageType::SRP_INIT) {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Expected SRP_INIT"}));
+                return std::nullopt;
+            }
+
+            auto init = Protocol::decode<SrpInitMsg>(msg);
+            if (init.protocol_version != kProtocolVersion) {
+                conn->send_packet(Protocol::encode(
+                    MessageType::ERROR_MSG,
+                    ErrorMsg{"Unsupported protocol version " + std::to_string(init.protocol_version)
+                             + "; server speaks version " + std::to_string(kProtocolVersion)}));
+                return std::nullopt;
+            }
+
+            if (init.username.empty() || init.A_b64.empty()) {
+                conn->send_packet(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Invalid SRP_INIT"}));
+                return std::nullopt;
+            }
+
+            challenge = srp_server_->init_authentication(
+                init.username, auth::SRPUtils::base64_to_bytes(init.A_b64));
+            username = init.username;
 
             // send SRP_CHALLENGE
             conn->send_packet(Protocol::encode(MessageType::SRP_CHALLENGE, SrpChallengeMsg{

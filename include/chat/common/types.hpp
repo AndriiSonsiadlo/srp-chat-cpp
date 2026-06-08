@@ -62,7 +62,6 @@ namespace chat
         SRP_CHALLENGE,      // server sends challenge
         SRP_RESPONSE,       // client sends proof M
         SRP_SUCCESS,        // server confirms authentication
-        SRP_USER_NOT_FOUND, // server rejects authentication due to user not found
     };
 
     struct User

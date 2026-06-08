@@ -66,6 +66,11 @@ namespace chat::auth
         static std::vector<uint8_t> hash_multiple(
             const std::vector<std::vector<uint8_t>>& values);
 
+        // HMAC-SHA256, used to derive decoy credentials for unknown usernames.
+        static std::vector<uint8_t> hmac_sha256(
+            const std::vector<uint8_t>& key,
+            const std::vector<uint8_t>& data);
+
         // Random number generation
         static std::vector<uint8_t> random_bytes(size_t length);
 

@@ -16,7 +16,7 @@ namespace chat::client
     class Client
     {
     public:
-        Client(std::string host, int port, std::string username);
+        Client(std::string host, int port, std::string username, bool register_first);
         ~Client();
 
         void run();
@@ -34,6 +34,7 @@ namespace chat::client
         std::string username_;
         std::string password_;
         std::string user_id_;
+        bool register_first_;
 
         std::atomic<bool> running_;
         std::atomic<bool> connected_;
@@ -47,6 +48,7 @@ namespace chat::client
         std::mutex users_mutex_;
         std::mutex ui_mutex_;
 
+        void connect();
         void disconnect();
 
         void srp_authenticate();

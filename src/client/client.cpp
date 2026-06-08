@@ -17,11 +17,12 @@ namespace chat::client
         constexpr size_t kRenderedMessageCount = 20;
     }
 
-    Client::Client(std::string host, const int port, std::string username)
+    Client::Client(std::string host, const int port, std::string username, const bool register_first)
         : socket_(io_context_)
           , host_(std::move(host))
           , port_(port)
           , username_(std::move(username))
+          , register_first_(register_first)
           , running_(false)
           , connected_(false)
     {
@@ -36,7 +37,11 @@ namespace chat::client
     {
         try
         {
-            // try to authenticate, offer registration if user doesn't exist
+            connect();
+
+            if (register_first_)
+                srp_register();
+
             srp_authenticate();
 
             // start receive thread
@@ -99,6 +104,17 @@ namespace chat::client
             if (receive_thread_.joinable())
                 receive_thread_.join();
         }
+    }
+
+    void Client::connect()
+    {
+        std::unique_lock<std::mutex> ui_lock(ui_mutex_);
+        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+        ui_lock.unlock();
+
+        boost::asio::ip::tcp::resolver resolver(io_context_);
+        auto endpoints = resolver.resolve(host_, std::to_string(port_));
+        boost::asio::connect(socket_, endpoints);
     }
 
     void Client::disconnect()
@@ -281,14 +297,6 @@ namespace chat::client
     void Client::srp_authenticate()
     {
         std::unique_lock<std::mutex> ui_lock(ui_mutex_);
-        std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
-        ui_lock.unlock();
-
-        boost::asio::ip::tcp::resolver resolver(io_context_);
-        auto endpoints = resolver.resolve(host_, std::to_string(port_));
-        boost::asio::connect(socket_, endpoints);
-
-        ui_lock.lock();
         std::cout << "Enter password: ";
         ui_lock.unlock();
         std::getline(std::cin, password_);
@@ -301,39 +309,8 @@ namespace chat::client
             MessageType::SRP_INIT,
             SrpInitMsg{kProtocolVersion, username_, auth::SRPUtils::bytes_to_base64(A)}));
 
-        // step 2: receive response (could be SRP_CHALLENGE, SRP_USER_NOT_FOUND, or ERROR_MSG)
+        // step 2: receive response (could be SRP_CHALLENGE or ERROR_MSG)
         auto [type, payload] = receive_packet();
-
-        if (type == MessageType::SRP_USER_NOT_FOUND)
-        {
-            ui_lock.lock();
-            std::cout << "User not found. Register? (y/n): ";
-            ui_lock.unlock();
-
-            std::string response;
-            std::getline(std::cin, response);
-            if (response == "y" || response == "Y")
-            {
-                // Register and then retry authentication
-                srp_register();
-
-
-                auto A_retry = srp_client_->generate_A();
-                send_packet(Protocol::encode(
-                    MessageType::SRP_INIT,
-                    SrpInitMsg{kProtocolVersion, username_, auth::SRPUtils::bytes_to_base64(A_retry)}
-                ));
-
-                // Receive the challenge
-                auto retry_packet = receive_packet();
-                type              = retry_packet.first;
-                payload           = retry_packet.second;
-            }
-            else
-            {
-                throw std::runtime_error("Authentication cancelled");
-            }
-        }
 
         if (type == MessageType::ERROR_MSG)
         {

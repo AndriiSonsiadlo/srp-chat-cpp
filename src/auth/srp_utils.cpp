@@ -6,6 +6,7 @@
 #include <openssl/evp.h>
 #include <openssl/buffer.h>
 #include <openssl/crypto.h>
+#include <openssl/hmac.h>
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
@@ -132,6 +133,23 @@ namespace chat::auth
         for (const auto& v : values)
             combined.insert(combined.end(), v.begin(), v.end());
         return hash_sha256(combined);
+    }
+
+    std::vector<uint8_t> SRPUtils::hmac_sha256(
+        const std::vector<uint8_t>& key,
+        const std::vector<uint8_t>& data)
+    {
+        std::vector<uint8_t> mac(SHA256_DIGEST_LENGTH);
+        unsigned int mac_len = 0;
+
+        if (!HMAC(EVP_sha256(),
+                  key.data(), static_cast<int>(key.size()),
+                  data.data(), data.size(),
+                  mac.data(), &mac_len))
+            throw std::runtime_error("HMAC-SHA256 failed");
+
+        mac.resize(mac_len);
+        return mac;
     }
 
     std::vector<uint8_t> SRPUtils::random_bytes(size_t length)

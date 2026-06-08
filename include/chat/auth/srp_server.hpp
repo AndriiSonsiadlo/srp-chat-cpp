@@ -34,6 +34,10 @@ namespace chat::auth
         // room salt for message encryption (shared by all users)
         std::vector<uint8_t> room_salt_;
 
+        // Random per process, never persisted, never transmitted. Makes decoy
+        // credentials for unknown usernames deterministic without being guessable.
+        std::vector<uint8_t> server_secret_;
+
     public:
         SRPServer();
         explicit SRPServer(std::string users_path);
@@ -93,5 +97,6 @@ namespace chat::auth
 
     private:
         [[nodiscard]] std::string generate_user_id() const;
+        [[nodiscard]] UserCredentials decoy_credentials(const std::string& username) const;
     };
 } // namespace chat::auth

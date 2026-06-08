@@ -20,6 +20,7 @@ namespace chat::auth
     SRPServer::SRPServer(std::string users_path, std::vector<uint8_t> room_salt)
         : users_(std::move(users_path))
           , room_salt_(std::move(room_salt))
+          , server_secret_(SRPUtils::random_bytes(32))
     {
         // initialize SRP parameters
         N_ = std::make_unique<SRPUtils::BigNum>(SRP_N_HEX_2048);
@@ -36,6 +37,7 @@ namespace chat::auth
           , users_(std::move(other.users_))
           , sessions_(std::move(other.sessions_))
           , room_salt_(std::move(other.room_salt_))
+          , server_secret_(std::move(other.server_secret_))
     {
     }
 
@@ -43,12 +45,13 @@ namespace chat::auth
     {
         if (this != &other)
         {
-            N_         = std::move(other.N_);
-            g_         = std::move(other.g_);
-            k_         = std::move(other.k_);
-            users_     = std::move(other.users_);
-            sessions_  = std::move(other.sessions_);
-            room_salt_ = std::move(other.room_salt_);
+            N_             = std::move(other.N_);
+            g_             = std::move(other.g_);
+            k_             = std::move(other.k_);
+            users_         = std::move(other.users_);
+            sessions_      = std::move(other.sessions_);
+            room_salt_     = std::move(other.room_salt_);
+            server_secret_ = std::move(other.server_secret_);
         }
         return *this;
     }
@@ -72,11 +75,11 @@ namespace chat::auth
         const std::string& username,
         const std::vector<uint8_t>& A)
     {
-        // get user credentials
-        const auto found = users_.find(username);
-        if (!found.has_value())
-            throw std::runtime_error("User not found");
-        const UserCredentials creds = *found;
+        // get user credentials, falling back to a deterministic decoy for unknown
+        // usernames so an attacker cannot distinguish "no such user" from "wrong
+        // password" at this stage of the handshake.
+        const auto found          = users_.find(username);
+        const UserCredentials creds = found.has_value() ? *found : decoy_credentials(username);
 
         // SRP-6a: A ≡ 0 (mod N) would force S = 0. Refuse it.
         const SRPUtils::BigNum A_bn(A);
@@ -212,5 +215,34 @@ namespace chat::auth
     std::string SRPServer::generate_user_id() const
     {
         return "user_" + SRPUtils::random_hex_id(16);
+    }
+
+    UserCredentials SRPServer::decoy_credentials(const std::string& username) const
+    {
+        const std::vector<uint8_t> username_bytes(username.begin(), username.end());
+
+        auto salt_seed = std::vector<uint8_t>{'s', 'a', 'l', 't', ':'};
+        salt_seed.insert(salt_seed.end(), username_bytes.begin(), username_bytes.end());
+        auto salt = SRPUtils::hmac_sha256(server_secret_, salt_seed);
+        salt.resize(SRP_SALT_SIZE);
+
+        auto verifier_seed = std::vector<uint8_t>{'v', 'e', 'r', 'i', 'f', 'i', 'e', 'r', ':'};
+        verifier_seed.insert(verifier_seed.end(), username_bytes.begin(), username_bytes.end());
+        const auto verifier_hash = SRPUtils::hmac_sha256(server_secret_, verifier_seed);
+
+        // Reduce mod N so the value is a legal group element. The client cannot
+        // produce a matching proof without the corresponding password, so the
+        // handshake fails at M verification just as a wrong password would.
+        const SRPUtils::BigNum raw(verifier_hash);
+        SRPUtils::BnCtx ctx;
+        SRPUtils::BigNum verifier;
+        if (!BN_mod(verifier.get(), raw.get(), N_->get(), ctx.get()))
+            throw std::runtime_error("Failed to derive decoy verifier");
+
+        return UserCredentials{
+            .username = username,
+            .salt = std::move(salt),
+            .verifier = verifier.to_bytes()
+        };
     }
 } // namespace chat::auth
