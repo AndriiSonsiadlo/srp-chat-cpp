@@ -34,7 +34,6 @@ find_package(OpenSSL REQUIRED)
 # Common library
 add_library(chat_common STATIC
         src/common/buffer.cpp
-        src/common/protocol.cpp
 )
 target_link_libraries(chat_common
         PUBLIC
@@ -72,7 +71,7 @@ target_include_directories(chat_auth PUBLIC ${PROJECT_SOURCE_DIR}/include)
 add_executable(chat_server
         src/server/main.cpp
         src/server/server.cpp
-        src/server/connection_manager.cpp
+        src/server/session.cpp
         src/server/room.cpp
 )
 target_link_libraries(chat_server

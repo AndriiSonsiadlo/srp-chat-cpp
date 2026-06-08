@@ -6,6 +6,10 @@
 #include <stdexcept>
 
 #include <boost/asio.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/read.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
 
 #include "chat/common/types.hpp"
 #include "chat/common/buffer.hpp"
@@ -139,8 +143,34 @@ namespace chat
     {
         inline constexpr uint32_t kMaxPayloadSize = 1024U * 1024U; // 1 MiB
 
-        std::vector<uint8_t> make_empty_packet(MessageType type);
+        inline boost::asio::awaitable<void> async_send_packet(
+            boost::asio::ip::tcp::socket& socket,
+            const std::vector<uint8_t>& packet)
+        {
+            co_await boost::asio::async_write(
+                socket, boost::asio::buffer(packet), boost::asio::use_awaitable);
+        }
 
+        inline boost::asio::awaitable<std::pair<MessageType, std::vector<uint8_t>>>
+        async_receive_packet(boost::asio::ip::tcp::socket& socket)
+        {
+            std::array<uint8_t, MsgHeader::kWireSize> raw{};
+            co_await boost::asio::async_read(
+                socket, boost::asio::buffer(raw), boost::asio::use_awaitable);
+
+            const auto header = decode_header(raw);
+            if (header.size > kMaxPayloadSize)
+                throw std::runtime_error("Incoming payload exceeds maximum allowed size");
+
+            std::vector<uint8_t> payload(header.size);
+            if (header.size > 0)
+                co_await boost::asio::async_read(
+                    socket, boost::asio::buffer(payload), boost::asio::use_awaitable);
+
+            co_return std::pair{static_cast<MessageType>(header.type), std::move(payload)};
+        }
+
+        // Blocking variants; the client still uses them until Task 10 converts it.
         inline void send_packet(boost::asio::ip::tcp::socket& socket, const std::vector<uint8_t>& packet)
         {
             boost::asio::write(socket, boost::asio::buffer(packet));
