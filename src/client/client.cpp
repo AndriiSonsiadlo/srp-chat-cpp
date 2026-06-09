@@ -229,6 +229,7 @@ namespace chat::client
 
                 std::vector<Message> decrypted;
                 decrypted.reserve(msg.messages.size());
+                size_t skipped = 0;
                 for (const auto& entry : msg.messages)
                 {
                     try
@@ -242,9 +243,14 @@ namespace chat::client
                     }
                     catch (const std::exception&)
                     {
-                        continue; // skip an entry we cannot read rather than aborting the join
+                        ++skipped; // skip an entry we cannot read rather than aborting the join
                     }
                 }
+
+                // Count only — never the exception text or any ciphertext, which
+                // would leak length/content of what we failed to open.
+                if (skipped > 0)
+                    log::warn("skipped " + std::to_string(skipped) + " unreadable history entries");
 
                 {
                     std::lock_guard<std::mutex> lock(messages_mutex_);
