@@ -3,10 +3,13 @@
 #include <string>
 #include <memory>
 #include <atomic>
+#include <optional>
 #include <thread>
 #include <vector>
 #include <mutex>
 #include <boost/asio.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 
 #include "chat/auth/srp_client.hpp"
 #include "chat/common/types.hpp"
@@ -39,7 +42,9 @@ namespace chat::client
         std::atomic<bool> running_;
         std::atomic<bool> connected_;
 
-        std::thread receive_thread_;
+        // Runs io_context_; replaces the old blocking receive thread.
+        std::thread io_thread_;
+        std::optional<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> work_guard_;
 
         std::vector<Message> messages_;
         std::vector<User> users_;
@@ -51,19 +56,18 @@ namespace chat::client
         void connect();
         void disconnect();
 
-        void srp_authenticate();
-        void srp_register();
+        boost::asio::awaitable<void> srp_authenticate();
+        boost::asio::awaitable<void> srp_register();
 
-        void send_message(const std::string& text);
-        void receive_loop();
+        boost::asio::awaitable<void> send_message(std::string text);
+        boost::asio::awaitable<void> receive_loop();
 
-        void send_packet(const std::vector<uint8_t>& packet);
-        std::pair<MessageType, std::vector<uint8_t>> receive_packet();
+        void input_loop(); // blocking stdin loop, runs on the main thread
+
         void handle_packet(MessageType type, const std::vector<uint8_t>& payload);
         void handle_broadcast(const std::vector<uint8_t>& payload);
 
         void render_ui();
-        void clear_screen();
         void print_banner();
     };
 } // namespace chat::client

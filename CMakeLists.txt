@@ -87,12 +87,14 @@ target_link_libraries(chat_server
 add_executable(chat_client
         src/client/main.cpp
         src/client/client.cpp
+        src/client/terminal.cpp
 )
 target_link_libraries(chat_client
         PRIVATE
         chat_common
         chat_auth
         chat_crypto
+        OpenSSL::Crypto
         Boost::system
         Threads::Threads
 )

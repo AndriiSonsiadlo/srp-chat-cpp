@@ -169,27 +169,5 @@ namespace chat
 
             co_return std::pair{static_cast<MessageType>(header.type), std::move(payload)};
         }
-
-        // Blocking variants; the client still uses them until Task 10 converts it.
-        inline void send_packet(boost::asio::ip::tcp::socket& socket, const std::vector<uint8_t>& packet)
-        {
-            boost::asio::write(socket, boost::asio::buffer(packet));
-        }
-
-        inline std::pair<MessageType, std::vector<uint8_t>> receive_packet(boost::asio::ip::tcp::socket& socket)
-        {
-            std::array<uint8_t, MsgHeader::kWireSize> raw{};
-            boost::asio::read(socket, boost::asio::buffer(raw));
-
-            const auto header = decode_header(raw);
-            if (header.size > kMaxPayloadSize)
-                throw std::runtime_error("Incoming payload exceeds maximum allowed size");
-
-            std::vector<uint8_t> payload(header.size);
-            if (header.size > 0)
-                boost::asio::read(socket, boost::asio::buffer(payload));
-
-            return {static_cast<MessageType>(header.type), std::move(payload)};
-        }
     }
 } // namespace chat
