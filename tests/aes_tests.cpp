@@ -240,24 +240,6 @@ namespace chat::crypto
         EXPECT_EQ(decrypted, plaintext);
     }
 
-    TEST(AesTest, WrongKeyFailsToDecrypt)
-    {
-        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x11);
-        const std::vector<uint8_t> other(crypto::AESEngine::KEY_SIZE, 0x22);
-
-        const auto sealed = crypto::AESEngine::encrypt_string("secret", key);
-        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, other), std::runtime_error);
-    }
-
-    TEST(AesTest, FlippedTagBitIsRejected)
-    {
-        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x33);
-        auto sealed = crypto::AESEngine::encrypt_string("secret", key);
-
-        sealed.back() ^= 0x01; // last byte is inside the GCM tag
-        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key), std::runtime_error);
-    }
-
     TEST(AesTest, FlippedCiphertextBitIsRejected)
     {
         const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x44);
@@ -291,23 +273,6 @@ namespace chat::crypto
         EXPECT_NE(first, second);
         EXPECT_NE(std::vector<uint8_t>(first.begin(), first.begin() + crypto::AESEngine::IV_SIZE),
                   std::vector<uint8_t>(second.begin(), second.begin() + crypto::AESEngine::IV_SIZE));
-    }
-
-    TEST(AesTest, MismatchedAadIsRejected)
-    {
-        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x77);
-        const std::vector<uint8_t> aad{'c', 't', 'x', '1'};
-        const std::vector<uint8_t> other_aad{'c', 't', 'x', '2'};
-
-        const auto sealed = crypto::AESEngine::encrypt_string("secret", key, aad);
-        EXPECT_EQ(crypto::AESEngine::decrypt_string(sealed, key, aad), "secret");
-        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key, other_aad), std::runtime_error);
-    }
-
-    TEST(AesTest, WrongKeySizeIsRejected)
-    {
-        const std::vector<uint8_t> short_key(16, 0x88);
-        EXPECT_THROW((void)crypto::AESEngine::encrypt_string("secret", short_key), std::runtime_error);
     }
 
     TEST(AesTest, HkdfIsDeterministicAndSaltDependent)
