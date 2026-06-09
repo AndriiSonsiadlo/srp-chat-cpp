@@ -16,10 +16,18 @@
 
 namespace chat::client
 {
+    struct ClientConfig
+    {
+        std::string host     = "localhost";
+        uint16_t port        = 8888;
+        std::string username;
+        bool register_first  = false;
+    };
+
     class Client
     {
     public:
-        Client(std::string host, int port, std::string username, bool register_first);
+        explicit Client(ClientConfig config);
         ~Client();
 
         void run();
@@ -32,12 +40,9 @@ namespace chat::client
         std::unique_ptr<auth::SRPClient> srp_client_;
         std::vector<uint8_t> room_key_;
 
-        std::string host_;
-        int port_;
-        std::string username_;
+        ClientConfig config_;
         std::string password_;
         std::string user_id_;
-        bool register_first_;
 
         std::atomic<bool> running_;
         std::atomic<bool> connected_;

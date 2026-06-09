@@ -44,12 +44,9 @@ namespace chat::client
         }
     }
 
-    Client::Client(std::string host, const int port, std::string username, const bool register_first)
+    Client::Client(ClientConfig config)
         : socket_(io_context_)
-          , host_(std::move(host))
-          , port_(port)
-          , username_(std::move(username))
-          , register_first_(register_first)
+          , config_(std::move(config))
           , running_(false)
           , connected_(false)
     {
@@ -70,7 +67,7 @@ namespace chat::client
                 io_context_,
                 [this]() -> boost::asio::awaitable<void>
                 {
-                    if (register_first_)
+                    if (config_.register_first)
                         co_await srp_register();
 
                     co_await srp_authenticate();
@@ -159,11 +156,11 @@ namespace chat::client
     {
         {
             std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "Connecting to " << host_ << ":" << port_ << "..." << std::endl;
+            std::cout << "Connecting to " << config_.host << ":" << config_.port << "..." << std::endl;
         }
 
         boost::asio::ip::tcp::resolver resolver(io_context_);
-        auto endpoints = resolver.resolve(host_, std::to_string(port_));
+        auto endpoints = resolver.resolve(config_.host, std::to_string(config_.port));
         boost::asio::connect(socket_, endpoints);
     }
 
@@ -346,7 +343,7 @@ namespace chat::client
             std::lock_guard<std::mutex> lock(ui_mutex_);
             terminal::clear_line();
 
-            const char* name_color = username == username_
+            const char* name_color = username == config_.username
                                          ? terminal::color("\033[32m")
                                          : terminal::color("\033[36m");
 
@@ -359,18 +356,18 @@ namespace chat::client
 
     boost::asio::awaitable<void> Client::srp_authenticate()
     {
-        // srp_register() (when register_first_ is set) already prompted for and
+        // srp_register() (when register_first is set) already prompted for and
         // captured the password immediately before this call — don't ask twice.
         if (password_.empty())
             password_ = terminal::read_password("Enter password: ");
 
-        srp_client_ = std::make_unique<auth::SRPClient>(username_, password_);
+        srp_client_ = std::make_unique<auth::SRPClient>(config_.username, password_);
 
         // step 1: generate A and send SRP_INIT
         auto A = srp_client_->generate_A();
         co_await ProtocolHelpers::async_send_packet(socket_, Protocol::encode(
             MessageType::SRP_INIT,
-            SrpInitMsg{kProtocolVersion, username_, auth::SRPUtils::bytes_to_base64(A)}));
+            SrpInitMsg{kProtocolVersion, config_.username, auth::SRPUtils::bytes_to_base64(A)}));
 
         // step 2: receive response (could be SRP_CHALLENGE or ERROR_MSG)
         auto [type, payload] = co_await ProtocolHelpers::async_receive_packet(socket_);
@@ -450,7 +447,7 @@ namespace chat::client
     {
         {
             std::lock_guard<std::mutex> lock(ui_mutex_);
-            std::cout << "Registering new user '" << username_ << "'..." << std::endl;
+            std::cout << "Registering new user '" << config_.username << "'..." << std::endl;
         }
 
         password_    = terminal::read_password("Enter password: ");
@@ -461,13 +458,13 @@ namespace chat::client
             throw std::runtime_error("Passwords do not match");
 
         // generate credentials
-        auto creds = auth::SRPClient::register_user(username_, password_);
+        auto creds = auth::SRPClient::register_user(config_.username, password_);
 
         // send SRP_REGISTER
         co_await ProtocolHelpers::async_send_packet(socket_, Protocol::encode(
             MessageType::SRP_REGISTER,
             SrpRegisterMsg{
-                .username = username_,
+                .username = config_.username,
                 .salt_b64 = auth::SRPUtils::bytes_to_base64(creds.salt),
                 .verifier_b64 = auth::SRPUtils::bytes_to_base64(creds.verifier)
             }));
@@ -520,7 +517,7 @@ namespace chat::client
                 auto& msg = messages_[i];
                 std::cout << "[" << format_time(msg.timestamp, "%H:%M:%S", false) << "] ";
 
-                if (msg.username == username_)
+                if (msg.username == config_.username)
                     std::cout << terminal::color("\033[32m") << msg.username << terminal::color("\033[0m");
                 else
                     std::cout << terminal::color("\033[36m") << msg.username << terminal::color("\033[0m");

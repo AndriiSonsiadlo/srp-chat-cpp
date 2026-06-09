@@ -34,6 +34,7 @@ find_package(OpenSSL REQUIRED)
 # Common library
 add_library(chat_common STATIC
         src/common/buffer.cpp
+        src/common/cli.cpp
 )
 target_link_libraries(chat_common
         PUBLIC
@@ -177,8 +178,18 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(cli_tests
+            tests/cli_tests.cpp
+    )
+    target_link_libraries(cli_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
+    gtest_discover_tests(cli_tests)
     gtest_discover_tests(protocol_tests)
     gtest_discover_tests(room_tests)
     gtest_discover_tests(srp_tests)
