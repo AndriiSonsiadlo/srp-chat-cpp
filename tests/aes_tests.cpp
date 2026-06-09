@@ -239,4 +239,91 @@ namespace chat::crypto
 
         EXPECT_EQ(decrypted, plaintext);
     }
+
+    TEST(AesTest, WrongKeyFailsToDecrypt)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x11);
+        const std::vector<uint8_t> other(crypto::AESEngine::KEY_SIZE, 0x22);
+
+        const auto sealed = crypto::AESEngine::encrypt_string("secret", key);
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, other), std::runtime_error);
+    }
+
+    TEST(AesTest, FlippedTagBitIsRejected)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x33);
+        auto sealed = crypto::AESEngine::encrypt_string("secret", key);
+
+        sealed.back() ^= 0x01; // last byte is inside the GCM tag
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key), std::runtime_error);
+    }
+
+    TEST(AesTest, FlippedCiphertextBitIsRejected)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x44);
+        auto sealed = crypto::AESEngine::encrypt_string("a much longer secret message", key);
+
+        sealed[crypto::AESEngine::IV_SIZE + 2] ^= 0x01;
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key), std::runtime_error);
+    }
+
+    TEST(AesTest, TruncatedPayloadIsRejected)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x55);
+        auto sealed = crypto::AESEngine::encrypt_string("secret", key);
+
+        sealed.resize(sealed.size() - 4);
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key), std::runtime_error);
+
+        const std::vector<uint8_t> far_too_short(4, 0x00);
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(far_too_short, key), std::runtime_error);
+    }
+
+    TEST(AesTest, RepeatedEncryptionUsesAFreshIv)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x66);
+
+        const auto first  = crypto::AESEngine::encrypt_string("same text", key);
+        const auto second = crypto::AESEngine::encrypt_string("same text", key);
+
+        // GCM is catastrophically broken by IV reuse; identical plaintext must
+        // still produce different bytes.
+        EXPECT_NE(first, second);
+        EXPECT_NE(std::vector<uint8_t>(first.begin(), first.begin() + crypto::AESEngine::IV_SIZE),
+                  std::vector<uint8_t>(second.begin(), second.begin() + crypto::AESEngine::IV_SIZE));
+    }
+
+    TEST(AesTest, MismatchedAadIsRejected)
+    {
+        const std::vector<uint8_t> key(crypto::AESEngine::KEY_SIZE, 0x77);
+        const std::vector<uint8_t> aad{'c', 't', 'x', '1'};
+        const std::vector<uint8_t> other_aad{'c', 't', 'x', '2'};
+
+        const auto sealed = crypto::AESEngine::encrypt_string("secret", key, aad);
+        EXPECT_EQ(crypto::AESEngine::decrypt_string(sealed, key, aad), "secret");
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(sealed, key, other_aad), std::runtime_error);
+    }
+
+    TEST(AesTest, WrongKeySizeIsRejected)
+    {
+        const std::vector<uint8_t> short_key(16, 0x88);
+        EXPECT_THROW((void)crypto::AESEngine::encrypt_string("secret", short_key), std::runtime_error);
+    }
+
+    TEST(AesTest, HkdfIsDeterministicAndSaltDependent)
+    {
+        const std::vector<uint8_t> ikm(32, 0x99);
+        const std::vector<uint8_t> salt_a(16, 0x01);
+        const std::vector<uint8_t> salt_b(16, 0x02);
+        const std::string info = "srp-chat/aes-256-gcm/v1";
+
+        const auto key_a1 = crypto::AESEngine::derive_key(ikm, salt_a, info);
+        const auto key_a2 = crypto::AESEngine::derive_key(ikm, salt_a, info);
+        const auto key_b  = crypto::AESEngine::derive_key(ikm, salt_b, info);
+
+        EXPECT_EQ(key_a1.size(), crypto::AESEngine::KEY_SIZE);
+        EXPECT_EQ(key_a1, key_a2);
+        EXPECT_NE(key_a1, key_b);
+        EXPECT_NE(key_a1, crypto::AESEngine::derive_key(ikm, salt_a, "different-info"));
+    }
 } // namespace chat::crypto
