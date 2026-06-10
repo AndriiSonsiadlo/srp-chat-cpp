@@ -100,10 +100,15 @@ namespace chat::server
             while (history_.size() > kMaxHistory)
                 history_.pop_front();
 
+            // Bind the ciphertext to its sender: without this AAD, an on-path
+            // attacker could take a valid ciphertext and re-attribute it to a
+            // different username (the GCM tag alone only covers the message text).
+            const std::vector<uint8_t> aad(username.begin(), username.end());
+
             outbox.reserve(members_.size());
             for (const auto& [user_id, member] : members_) {
                 try {
-                    const auto sealed = crypto::AESEngine::encrypt_string(text, member.key);
+                    const auto sealed = crypto::AESEngine::encrypt_string(text, member.key, aad);
                     outbox.emplace_back(
                         member.sink,
                         Protocol::encode(
@@ -152,7 +157,8 @@ namespace chat::server
             init.messages.reserve(history_.size());
             for (const auto& item : history_) {
                 try {
-                    const auto sealed = crypto::AESEngine::encrypt_string(item.text, key);
+                    const std::vector<uint8_t> aad(item.username.begin(), item.username.end());
+                    const auto sealed = crypto::AESEngine::encrypt_string(item.text, key, aad);
                     init.messages.push_back(HistoryEntry{
                         item.username,
                         auth::SRPUtils::bytes_to_base64(sealed),

@@ -38,6 +38,11 @@ namespace chat::server
         {
             return std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
         }
+
+        std::vector<uint8_t> aad_of(const std::string& username)
+        {
+            return std::vector<uint8_t>(username.begin(), username.end());
+        }
     }
 
     class RoomTest : public ::testing::Test
@@ -113,11 +118,32 @@ namespace chat::server
         // Same plaintext, different keys, therefore different ciphertext.
         EXPECT_NE(for_alice.ciphertext_b64, for_bob.ciphertext_b64);
 
+        const auto sender_aad = aad_of("alice");
+
         EXPECT_EQ(crypto::AESEngine::decrypt_string(
-                      auth::SRPUtils::base64_to_bytes(for_alice.ciphertext_b64), test_key(0xAA)),
+                      auth::SRPUtils::base64_to_bytes(for_alice.ciphertext_b64), test_key(0xAA), sender_aad),
                   "hello everyone");
         EXPECT_EQ(crypto::AESEngine::decrypt_string(
-                      auth::SRPUtils::base64_to_bytes(for_bob.ciphertext_b64), test_key(0xBB)),
+                      auth::SRPUtils::base64_to_bytes(for_bob.ciphertext_b64), test_key(0xBB), sender_aad),
+                  "hello everyone");
+    }
+
+    TEST_F(RoomTest, BroadcastCiphertextIsBoundToSenderUsername)
+    {
+        join_both();
+        room_.record_and_broadcast("alice", "hello everyone");
+
+        const auto for_alice  = Protocol::decode<BroadcastMsg>(payload_of(alice_->packets[0]));
+        const auto ciphertext = auth::SRPUtils::base64_to_bytes(for_alice.ciphertext_b64);
+
+        // Re-attributing a valid ciphertext to a different username must fail
+        // authentication, even with the correct key.
+        const auto wrong_aad = aad_of("bob");
+        EXPECT_THROW((void)crypto::AESEngine::decrypt_string(ciphertext, test_key(0xAA), wrong_aad),
+                     std::runtime_error);
+
+        const auto right_aad = aad_of("alice");
+        EXPECT_EQ(crypto::AESEngine::decrypt_string(ciphertext, test_key(0xAA), right_aad),
                   "hello everyone");
     }
 
@@ -135,12 +161,14 @@ namespace chat::server
         EXPECT_GT(init.messages[0].timestamp_ms, 0);
         EXPECT_LE(init.messages[0].timestamp_ms, init.messages[1].timestamp_ms);
 
+        const auto sender_aad = aad_of("alice");
+
         // Decryptable only with bob's key — the history is not plaintext.
         EXPECT_EQ(crypto::AESEngine::decrypt_string(
-                      auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xBB)),
+                      auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xBB), sender_aad),
                   "first");
         EXPECT_THROW((void)crypto::AESEngine::decrypt_string(
-                         auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xAA)),
+                         auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xAA), sender_aad),
                      std::runtime_error);
     }
 
@@ -154,8 +182,9 @@ namespace chat::server
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("user_b")));
 
         EXPECT_EQ(init.messages.size(), 100u);
+        const auto sender_aad = aad_of("alice");
         EXPECT_EQ(crypto::AESEngine::decrypt_string(
-                      auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xBB)),
+                      auth::SRPUtils::base64_to_bytes(init.messages[0].ciphertext_b64), test_key(0xBB), sender_aad),
                   "msg 50"); // oldest 50 dropped
     }
 

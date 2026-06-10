@@ -231,8 +231,9 @@ namespace chat::client
                 {
                     try
                     {
+                        const std::vector<uint8_t> aad(entry.username.begin(), entry.username.end());
                         auto text = crypto::AESEngine::decrypt_string(
-                            auth::SRPUtils::base64_to_bytes(entry.ciphertext_b64), room_key_);
+                            auth::SRPUtils::base64_to_bytes(entry.ciphertext_b64), room_key_, aad);
                         decrypted.emplace_back(
                             entry.username, std::move(text),
                             std::chrono::system_clock::time_point(
@@ -246,7 +247,14 @@ namespace chat::client
 
                 // Count only — never the exception text or any ciphertext, which
                 // would leak length/content of what we failed to open.
-                if (skipped > 0)
+                if (skipped > 0 && skipped == msg.messages.size())
+                    // Every entry failed: far more likely a desynced room key
+                    // (e.g. a tampered, unauthenticated room_salt in the SRP
+                    // challenge — see README Limitations) than scattered
+                    // corruption, so this deserves a louder signal.
+                    log::error("failed to decrypt all " + std::to_string(skipped)
+                               + " history entries; room key may be desynced");
+                else if (skipped > 0)
                     log::warn("skipped " + std::to_string(skipped) + " unreadable history entries");
 
                 {
@@ -318,7 +326,8 @@ namespace chat::client
         try
         {
             const auto encrypted = auth::SRPUtils::base64_to_bytes(encrypted_text_b64);
-            text                 = crypto::AESEngine::decrypt_string(encrypted, room_key_);
+            const std::vector<uint8_t> aad(username.begin(), username.end());
+            text                 = crypto::AESEngine::decrypt_string(encrypted, room_key_, aad);
         }
         catch (const std::exception& e)
         {

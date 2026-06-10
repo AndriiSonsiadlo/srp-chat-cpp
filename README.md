@@ -206,6 +206,16 @@ ctest --preset debug -R SrpTest
 - No client reconnect: a dropped connection ends the session.
 - No per-IP registration rate limiting.
 - Not end-to-end encrypted — see Threat model above.
+- `room_salt` (used to derive the AES room key via HKDF) is sent unauthenticated
+  in the `SRP_CHALLENGE`; an active on-path attacker (already a conceded
+  capability given no TLS) can tamper with it to desync the client's and
+  server's independently-derived keys. This causes decrypt failures, not a
+  confidentiality break — the attacker gains no key material. Not defended
+  against in this version.
+- Registering with an already-taken username reveals that the account exists
+  (the server must say so to refuse the registration). This is inherent to
+  self-service registration and not separately mitigated (no rate limiting,
+  as noted above).
 
 ## Layout
 

@@ -1,5 +1,7 @@
 #include "chat/server/session.hpp"
 
+#include <algorithm>
+
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -22,6 +24,12 @@ namespace chat::server
     {
         constexpr size_t kMaxMessageLength = 4096;
         constexpr int kMaxAuthAttempts     = 3;
+        // 2048-bit SRP group (SRP_N_HEX_2048 in srp_types.hpp) -> 256-byte N.
+        // A legal client ephemeral A is at most this many bytes; anything larger
+        // is either malformed or a deliberate attempt to bloat the orphaned
+        // session entry that init_authentication() stores before any proof is
+        // verified.
+        constexpr size_t kSrpMaxABytes = 256;
     }
 
     Session::Session(boost::asio::ip::tcp::socket socket, Server& server)
@@ -253,6 +261,10 @@ namespace chat::server
         }
 
         const auto A = auth::SRPUtils::base64_to_bytes(init.A_b64);
+        if (A.size() > kSrpMaxABytes) {
+            fail("Invalid SRP_INIT", "handshake: oversized A");
+            co_return std::nullopt;
+        }
 
         // Note: the "already logged in" check deliberately happens *after* proof
         // verification, in finish_login() below. Checking it earlier would tell an
@@ -282,12 +294,14 @@ namespace chat::server
                 co_await ProtocolHelpers::async_receive_packet(socket_);
 
             if (response_type != MessageType::SRP_RESPONSE) {
+                server_.srp().clear_session(challenge.user_id);
                 fail("Expected SRP_RESPONSE", "handshake: wrong response message");
                 co_return std::nullopt;
             }
 
             const auto response = Protocol::decode<SrpResponseMsg>(response_payload);
             if (response.user_id != challenge.user_id) {
+                server_.srp().clear_session(challenge.user_id);
                 fail("Authentication failed", "handshake: user id mismatch");
                 co_return std::nullopt;
             }
@@ -301,6 +315,7 @@ namespace chat::server
                 ++auth_attempts_;
                 log::warn(remote_ + ": proof rejected (attempt " + std::to_string(auth_attempts_)
                           + " of " + std::to_string(kMaxAuthAttempts) + "): " + e.what());
+                server_.srp().clear_session(challenge.user_id);
                 send(Protocol::encode(MessageType::ERROR_MSG, ErrorMsg{"Authentication failed"}));
                 continue;
             }
@@ -368,6 +383,15 @@ namespace chat::server
 
                     if (text.empty() || text.size() > kMaxMessageLength) {
                         fail("Message rejected", "message: length out of range");
+                        break;
+                    }
+
+                    // Single-line chat protocol: no control characters at all (this
+                    // also blocks ANSI/VT100 escapes, which would otherwise let one
+                    // client rewrite another's terminal, e.g. forging a fake
+                    // "*** X joined ***" line or the '>' prompt).
+                    if (std::ranges::any_of(text, [](const unsigned char c) { return c < 0x20; })) {
+                        fail("Message rejected", "message: control character in text");
                         break;
                     }
 
