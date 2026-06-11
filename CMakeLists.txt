@@ -74,6 +74,7 @@ add_executable(chat_server
         src/server/server.cpp
         src/server/session.cpp
         src/server/room.cpp
+        src/server/room_manager.cpp
 )
 target_link_libraries(chat_server
         PRIVATE
@@ -205,11 +206,27 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(room_manager_tests
+            tests/room_manager_tests.cpp
+            src/server/room.cpp
+            src/server/room_manager.cpp
+    )
+    target_link_libraries(room_manager_tests
+            PRIVATE
+            chat_common
+            chat_auth
+            chat_crypto
+            Boost::system
+            Threads::Threads
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(cli_tests)
     gtest_discover_tests(online_users_tests)
     gtest_discover_tests(protocol_tests)
+    gtest_discover_tests(room_manager_tests)
     gtest_discover_tests(room_name_tests)
     gtest_discover_tests(room_tests)
     gtest_discover_tests(srp_tests)
