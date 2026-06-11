@@ -11,6 +11,8 @@
 #include "chat/common/messages.hpp"
 #include "chat/common/protocol.hpp"
 #include "chat/crypto/aes_engine.hpp"
+#include "chat/server/room_manager.hpp"
+#include "chat/server/room_name.hpp"
 #include "chat/server/server.hpp"
 
 namespace chat::server
@@ -175,10 +177,15 @@ namespace chat::server
             // io_context uncaught and terminate the process, killing every other
             // session over one failed cleanup.
             try {
-                server_.room().leave(*user_id);
+                if (room_) {
+                    room_->leave(*user_id);
+                    room_->broadcast_packet(
+                        Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username_}));
+                    server_.rooms().drop_if_empty(room_->name());
+                    room_.reset();
+                }
+                server_.online().release(username_);
                 server_.srp().clear_session(*user_id);
-                server_.room().broadcast_packet(
-                    Protocol::encode(MessageType::USER_LEFT, UserLeftMsg{username_}));
                 log::info("user '" + username_ + "' disconnected");
             }
             catch (const std::exception& e) {
@@ -336,23 +343,36 @@ namespace chat::server
     awaitable<std::optional<std::string>> Session::finish_login(
         const std::string& username, const std::string& user_id)
     {
-        auto key = server_.srp().derive_session_key(user_id);
-        if (key.size() != crypto::AESEngine::KEY_SIZE) {
+        key_ = server_.srp().derive_session_key(user_id);
+        if (key_.size() != crypto::AESEngine::KEY_SIZE) {
             fail("Authentication failed", "handshake: derived key has wrong size");
             co_return std::nullopt;
         }
 
-        // Atomic: no window for a second login of the same account to slip in.
-        if (!server_.room().try_join(user_id, username, shared_from_this(), std::move(key))) {
+        // Atomic claim: no window for a second login of the same account. This
+        // used to be a side effect of Room::try_join refusing duplicate names,
+        // which stops working the moment there is more than one room.
+        if (!server_.online().try_claim(username)) {
             fail("User already logged in", "handshake: duplicate login for " + username);
             co_return std::nullopt;
         }
+
+        auto result = server_.rooms().join(
+            kDefaultRoom, "", user_id, username, shared_from_this(), key_);
+        if (result.status != JoinStatus::Ok) {
+            server_.online().release(username);
+            fail("Could not join the lobby", "handshake: lobby join refused");
+            co_return std::nullopt;
+        }
+
+        room_     = std::move(result.room);
         username_ = username;
+        user_id_  = user_id;
 
         log::info("user '" + username_ + "' authenticated from " + remote_);
 
-        send(server_.room().init_packet_for(user_id));
-        server_.room().broadcast_packet(
+        send(room_->init_packet_for(user_id));
+        room_->broadcast_packet(
             Protocol::encode(MessageType::USER_JOINED, UserJoinedMsg{username_, user_id}),
             user_id);
 
@@ -361,8 +381,6 @@ namespace chat::server
 
     awaitable<void> Session::message_loop(const std::string& user_id)
     {
-        const auto key = server_.srp().derive_session_key(user_id);
-
         while (socket_.is_open()) {
             auto [type, payload] = co_await ProtocolHelpers::async_receive_packet(socket_);
             extend_deadline();
@@ -374,7 +392,7 @@ namespace chat::server
                     std::string text;
                     try {
                         text = crypto::AESEngine::decrypt_string(
-                            auth::SRPUtils::base64_to_bytes(msg.ciphertext_b64), key);
+                            auth::SRPUtils::base64_to_bytes(msg.ciphertext_b64), key_);
                     }
                     catch (const std::exception&) {
                         fail("Message could not be decrypted", "message: decryption failed");
@@ -397,7 +415,7 @@ namespace chat::server
 
                     // Deliberately logs no plaintext.
                     log::info("message from '" + username_ + "' (" + std::to_string(text.size()) + " bytes)");
-                    server_.room().record_and_broadcast(username_, text);
+                    room_->record_and_broadcast(username_, text);
                     break;
                 }
                 case MessageType::DISCONNECT:

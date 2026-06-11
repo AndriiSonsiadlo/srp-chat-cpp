@@ -10,6 +10,7 @@
 #include <boost/asio.hpp>
 
 #include "chat/common/types.hpp"
+#include "chat/server/room.hpp"
 #include "chat/server/sink.hpp"
 
 namespace chat::server
@@ -72,5 +73,12 @@ namespace chat::server
         std::string username_;
         std::string remote_;
         int auth_attempts_ = 0;
+
+        // Current room. Null until finish_login() succeeds.
+        std::shared_ptr<Room> room_;
+        // Derived once at login: the message loop and every room join need it.
+        std::vector<uint8_t> key_;
+        std::string user_id_;
+        int room_password_attempts_ = 0;
     };
 } // namespace chat::server
