@@ -59,4 +59,24 @@ namespace chat
         EXPECT_THROW(cli.expect_known({"host", "port"}), std::runtime_error);
         EXPECT_NO_THROW(parse({"--host", "x"}).expect_known({"host", "port"}));
     }
+
+    TEST(CliTest, ParsesRoomCaps)
+    {
+        const auto cli = parse({"--max-rooms", "8", "--max-room-members", "12"});
+        EXPECT_EQ(cli.get_int("max-rooms", 64), 8);
+        EXPECT_EQ(cli.get_int("max-room-members", 64), 12);
+    }
+
+    TEST(CliTest, RoomCapsFallBackToDefaults)
+    {
+        const auto cli = parse({"--port", "9000"});
+        EXPECT_EQ(cli.get_int("max-rooms", 64), 64);
+        EXPECT_EQ(cli.get_int("max-room-members", 64), 64);
+    }
+
+    TEST(CliTest, RoomCapFlagsAreKnown)
+    {
+        const auto cli = parse({"--max-rooms", "8", "--max-room-members", "12"});
+        EXPECT_NO_THROW(cli.expect_known({"max-rooms", "max-room-members"}));
+    }
 } // namespace chat

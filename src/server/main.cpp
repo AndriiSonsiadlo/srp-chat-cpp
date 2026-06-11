@@ -17,6 +17,8 @@ namespace
             "  --max-connections <n>    Concurrent connection cap (default 256)\n"
             "  --handshake-timeout <s>  Seconds to complete authentication (default 30)\n"
             "  --idle-timeout <s>       Seconds of silence before disconnect (default 120)\n"
+            "  --max-rooms <n>          Room cap, lobby included (default 64)\n"
+            "  --max-room-members <n>   Members per room (default 64)\n"
             "  --help                   Show this message\n",
             program);
     }
@@ -27,7 +29,8 @@ int main(const int argc, char* argv[])
     try {
         const chat::Cli cli(argc, argv);
         cli.expect_known({"port", "users-db", "max-connections",
-                          "handshake-timeout", "idle-timeout", "help"});
+                          "handshake-timeout", "idle-timeout",
+                          "max-rooms", "max-room-members", "help"});
 
         if (cli.has("help")) {
             print_usage(argv[0]);
@@ -54,6 +57,16 @@ int main(const int argc, char* argv[])
             throw std::runtime_error("timeouts must be at least 1 second");
         config.handshake_timeout = std::chrono::seconds(handshake);
         config.idle_timeout      = std::chrono::seconds(idle);
+
+        const int max_rooms = cli.get_int("max-rooms", 64);
+        if (max_rooms < 1)
+            throw std::runtime_error("--max-rooms must be at least 1");
+        config.max_rooms = static_cast<size_t>(max_rooms);
+
+        const int max_room_members = cli.get_int("max-room-members", 64);
+        if (max_room_members < 1)
+            throw std::runtime_error("--max-room-members must be at least 1");
+        config.max_room_members = static_cast<size_t>(max_room_members);
 
         chat::server::Server server(config);
         server.run();

@@ -28,6 +28,7 @@ namespace chat::server
           , acceptor_(boost::asio::make_strand(io_context_),
                       boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), config_.port))
           , srp_server_(std::make_unique<auth::SRPServer>(config_.users_db))
+          , rooms_(config_.max_rooms, config_.max_room_members)
     {
         srp_server_->load();
     }
