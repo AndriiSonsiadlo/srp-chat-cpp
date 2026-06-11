@@ -196,9 +196,19 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(online_users_tests
+            tests/online_users_tests.cpp
+    )
+    target_link_libraries(online_users_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(cli_tests)
+    gtest_discover_tests(online_users_tests)
     gtest_discover_tests(protocol_tests)
     gtest_discover_tests(room_name_tests)
     gtest_discover_tests(room_tests)
