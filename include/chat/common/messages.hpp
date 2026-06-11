@@ -20,13 +20,53 @@ namespace chat
         [[nodiscard]] auto as_tuple() { return std::tie(username, ciphertext_b64, timestamp_ms); }
     };
 
+    struct RoomInfo
+    {
+        std::string name;   // the creator's casing
+        uint32_t user_count;
+        uint8_t has_password;
+
+        [[nodiscard]] auto as_tuple() const { return std::tie(name, user_count, has_password); }
+        [[nodiscard]] auto as_tuple() { return std::tie(name, user_count, has_password); }
+    };
+
     struct InitMsg
     {
+        std::string room;
         std::vector<HistoryEntry> messages;
         std::vector<User> users;
 
-        [[nodiscard]] auto as_tuple() const { return std::tie(messages, users); }
-        [[nodiscard]] auto as_tuple() { return std::tie(messages, users); }
+        [[nodiscard]] auto as_tuple() const { return std::tie(room, messages, users); }
+        [[nodiscard]] auto as_tuple() { return std::tie(room, messages, users); }
+    };
+
+    struct RoomListMsg
+    {
+        std::vector<RoomInfo> rooms;
+
+        [[nodiscard]] auto as_tuple() const { return std::tie(rooms); }
+        [[nodiscard]] auto as_tuple() { return std::tie(rooms); }
+    };
+
+    struct RoomCreateMsg
+    {
+        std::string name;
+        // Base64 AES-GCM payload sealed with the sender's session key, AAD = name.
+        // Empty means "create a public room".
+        std::string password_ct_b64;
+
+        [[nodiscard]] auto as_tuple() const { return std::tie(name, password_ct_b64); }
+        [[nodiscard]] auto as_tuple() { return std::tie(name, password_ct_b64); }
+    };
+
+    struct RoomJoinMsg
+    {
+        std::string name;
+        // As RoomCreateMsg. Empty means "no password supplied".
+        std::string password_ct_b64;
+
+        [[nodiscard]] auto as_tuple() const { return std::tie(name, password_ct_b64); }
+        [[nodiscard]] auto as_tuple() { return std::tie(name, password_ct_b64); }
     };
 
     struct TextMsg

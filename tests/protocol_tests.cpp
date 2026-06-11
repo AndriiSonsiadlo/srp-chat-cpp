@@ -138,14 +138,15 @@ namespace chat
         std::vector<HistoryEntry> messages;
         std::vector<User> users;
 
-        auto packet = Protocol::encode(MessageType::INIT, InitMsg{messages, users});
+        auto packet = Protocol::encode(MessageType::INIT, InitMsg{"lobby", messages, users});
 
         auto header = extract_header(packet);
         EXPECT_EQ(header.type, static_cast<uint16_t>(MessageType::INIT));
 
-        auto payload                           = extract_payload(packet);
-        auto [decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
+        auto payload                                          = extract_payload(packet);
+        auto [decoded_room, decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
 
+        EXPECT_EQ(decoded_room, "lobby");
         EXPECT_TRUE(decoded_messages.empty());
         EXPECT_TRUE(decoded_users.empty());
     }
@@ -162,11 +163,12 @@ namespace chat
             {"charlie", "user_3"}
         };
 
-        auto packet  = Protocol::encode(MessageType::INIT, InitMsg{messages, users});
+        auto packet  = Protocol::encode(MessageType::INIT, InitMsg{"lobby", messages, users});
         auto payload = extract_payload(packet);
 
-        auto [decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
+        auto [decoded_room, decoded_messages, decoded_users] = Protocol::decode<InitMsg>(payload);
 
+        EXPECT_EQ(decoded_room, "lobby");
         ASSERT_EQ(decoded_messages.size(), 2);
         EXPECT_EQ(decoded_messages[0].username, "alice");
         EXPECT_EQ(decoded_messages[0].ciphertext_b64, "Hello");

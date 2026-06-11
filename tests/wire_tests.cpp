@@ -93,4 +93,67 @@ namespace chat
         EXPECT_EQ(decoded.username, "alice");
         EXPECT_EQ(decoded.A_b64, "QUJD");
     }
+
+    TEST(WireTest, RoomListRoundTrip)
+    {
+        const RoomListMsg original{{
+            RoomInfo{"lobby", 3, 0},
+            RoomInfo{"Dev-Team", 1, 1},
+        }};
+
+        const auto packet  = Protocol::encode(MessageType::ROOM_LIST, original);
+        const auto payload = std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
+        const auto decoded = Protocol::decode<RoomListMsg>(payload);
+
+        ASSERT_EQ(decoded.rooms.size(), 2u);
+        EXPECT_EQ(decoded.rooms[0].name, "lobby");
+        EXPECT_EQ(decoded.rooms[0].user_count, 3u);
+        EXPECT_EQ(decoded.rooms[0].has_password, 0);
+        EXPECT_EQ(decoded.rooms[1].name, "Dev-Team");
+        EXPECT_EQ(decoded.rooms[1].user_count, 1u);
+        EXPECT_EQ(decoded.rooms[1].has_password, 1);
+    }
+
+    TEST(WireTest, EmptyRoomListRoundTrip)
+    {
+        const RoomListMsg original{};
+        const auto packet  = Protocol::encode(MessageType::ROOM_LIST, original);
+        const auto payload = std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
+        EXPECT_TRUE(Protocol::decode<RoomListMsg>(payload).rooms.empty());
+    }
+
+    TEST(WireTest, RoomJoinAndCreateRoundTrip)
+    {
+        const RoomJoinMsg join{"dev", "c2VhbGVk"};
+        auto packet  = Protocol::encode(MessageType::ROOM_JOIN, join);
+        auto payload = std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
+        const auto decoded_join = Protocol::decode<RoomJoinMsg>(payload);
+        EXPECT_EQ(decoded_join.name, "dev");
+        EXPECT_EQ(decoded_join.password_ct_b64, "c2VhbGVk");
+
+        const RoomCreateMsg create{"public-room", ""};
+        packet  = Protocol::encode(MessageType::ROOM_CREATE, create);
+        payload = std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
+        const auto decoded_create = Protocol::decode<RoomCreateMsg>(payload);
+        EXPECT_EQ(decoded_create.name, "public-room");
+        EXPECT_TRUE(decoded_create.password_ct_b64.empty());
+    }
+
+    TEST(WireTest, InitCarriesRoomName)
+    {
+        InitMsg original;
+        original.room = "dev";
+        original.messages.push_back(HistoryEntry{"alice", "c2VhbGVk", 1234});
+        original.users.push_back(User{"alice", "id-a"});
+
+        const auto packet  = Protocol::encode(MessageType::INIT, original);
+        const auto payload = std::vector<uint8_t>(packet.begin() + MsgHeader::kWireSize, packet.end());
+        const auto decoded = Protocol::decode<InitMsg>(payload);
+
+        EXPECT_EQ(decoded.room, "dev");
+        ASSERT_EQ(decoded.messages.size(), 1u);
+        EXPECT_EQ(decoded.messages[0].username, "alice");
+        ASSERT_EQ(decoded.users.size(), 1u);
+        EXPECT_EQ(decoded.users[0].username, "alice");
+    }
 } // namespace chat

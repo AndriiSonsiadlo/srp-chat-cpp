@@ -187,10 +187,20 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
 
+    add_executable(room_name_tests
+            tests/room_name_tests.cpp
+    )
+    target_link_libraries(room_name_tests
+            PRIVATE
+            chat_common
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(aes_tests)
     gtest_discover_tests(cli_tests)
     gtest_discover_tests(protocol_tests)
+    gtest_discover_tests(room_name_tests)
     gtest_discover_tests(room_tests)
     gtest_discover_tests(srp_tests)
     gtest_discover_tests(types_tests)

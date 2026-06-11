@@ -9,7 +9,8 @@
 
 namespace chat
 {
-    inline constexpr uint16_t kProtocolVersion = 1;
+    // 2: rooms. Adds ROOM_* messages and a room name in InitMsg.
+    inline constexpr uint16_t kProtocolVersion = 2;
 
     struct MsgHeader
     {
@@ -62,6 +63,12 @@ namespace chat
         SRP_CHALLENGE,      // server sends challenge
         SRP_RESPONSE,       // client sends proof M
         SRP_SUCCESS,        // server confirms authentication
+
+        // rooms
+        ROOM_LIST_REQ,  // client asks for the room list
+        ROOM_LIST,      // server sends the room list
+        ROOM_CREATE,    // client creates a room and joins it
+        ROOM_JOIN,      // client joins an existing room
     };
 
     struct User
