@@ -20,36 +20,44 @@ namespace chat::server
         }
     }
 
-    bool Room::try_join(const std::string& user_id,
-                        const std::string& username,
-                        std::shared_ptr<Sink> sink,
-                        std::vector<uint8_t> key)
+    Room::Room(std::string name, const std::string& password)
+        : name_(std::move(name))
+    {
+        if (password.empty())
+            return;
+
+        // Not PBKDF2: this hash never reaches disk, it lives in a room that ceases
+        // to exist when empty, and verification runs under the RoomManager mutex
+        // where a deliberately slow KDF would stall every other room operation.
+        // See docs/superpowers/specs/2026-08-10-multi-room-chat-design.md.
+        salt_          = auth::SRPUtils::random_bytes(16);
+        password_hmac_ = auth::SRPUtils::hmac_sha256(
+            salt_, std::vector<uint8_t>(password.begin(), password.end()));
+    }
+
+    bool Room::verify_password(const std::string& password) const
+    {
+        if (password_hmac_.empty())
+            return true;
+
+        const auto candidate = auth::SRPUtils::hmac_sha256(
+            salt_, std::vector<uint8_t>(password.begin(), password.end()));
+        return auth::SRPUtils::constant_time_equals(candidate, password_hmac_);
+    }
+
+    void Room::join(const std::string& user_id,
+                    const std::string& username,
+                    std::shared_ptr<Sink> sink,
+                    std::vector<uint8_t> key)
     {
         std::lock_guard<std::mutex> lock(mutex_);
-
-        const bool taken = std::ranges::any_of(members_, [&username](const auto& entry) {
-            return entry.second.username == username;
-        });
-        if (taken)
-            return false;
-
         members_[user_id] = Member{std::move(sink), username, std::move(key)};
-        return true;
     }
 
     void Room::leave(const std::string& user_id)
     {
-        std::shared_ptr<Sink> departing;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = members_.find(user_id); it != members_.end()) {
-                departing = it->second.sink;
-                members_.erase(it);
-            }
-        }
-
-        if (departing)
-            departing->close();
+        std::lock_guard<std::mutex> lock(mutex_);
+        members_.erase(user_id);
     }
 
     bool Room::username_online(const std::string& username) const
@@ -145,12 +153,13 @@ namespace chat::server
     std::vector<uint8_t> Room::init_packet_for(const std::string& user_id) const
     {
         InitMsg init;
+        init.room = name_;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
             const auto it = members_.find(user_id);
             if (it == members_.end())
-                return Protocol::encode(MessageType::INIT, InitMsg{});
+                return Protocol::encode(MessageType::INIT, init);
 
             const auto& key = it->second.key;
 

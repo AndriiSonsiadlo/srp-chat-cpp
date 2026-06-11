@@ -54,8 +54,8 @@ namespace chat::server
 
         void join_both()
         {
-            room_.try_join("user_a", "alice", alice_, test_key(0xAA));
-            room_.try_join("user_b", "bob", bob_, test_key(0xBB));
+            room_.join("user_a", "alice", alice_, test_key(0xAA));
+            room_.join("user_b", "bob", bob_, test_key(0xBB));
         }
     };
 
@@ -71,24 +71,16 @@ namespace chat::server
         EXPECT_EQ(room_.active_users().size(), 2u);
     }
 
-    TEST_F(RoomTest, TryJoinRefusesDuplicateUsername)
-    {
-        EXPECT_TRUE(room_.try_join("user_a", "alice", alice_, test_key(0xAA)));
-
-        // Same username, different user_id: must be refused, room untouched.
-        EXPECT_FALSE(room_.try_join("user_b", "alice", bob_, test_key(0xBB)));
-        EXPECT_EQ(room_.size(), 1u);
-        EXPECT_EQ(room_.username_of("user_b"), "");
-    }
-
-    TEST_F(RoomTest, LeaveRemovesAndCloses)
+    TEST_F(RoomTest, LeaveRemovesAndDoesNotClose)
     {
         join_both();
         room_.leave("user_a");
 
         EXPECT_EQ(room_.size(), 1u);
         EXPECT_FALSE(room_.username_online("alice"));
-        EXPECT_TRUE(alice_->closed);
+        // Leaving a room must not close the connection — a room switch is a leave
+        // followed by a join, and Session::run owns the socket teardown.
+        EXPECT_FALSE(alice_->closed);
     }
 
     TEST_F(RoomTest, BroadcastPacketExcludesTheNamedUser)
@@ -149,11 +141,11 @@ namespace chat::server
 
     TEST_F(RoomTest, HistoryIsEncryptedForTheJoiningUserAndKeepsTimestamps)
     {
-        room_.try_join("user_a", "alice", alice_, test_key(0xAA));
+        room_.join("user_a", "alice", alice_, test_key(0xAA));
         room_.record_and_broadcast("alice", "first");
         room_.record_and_broadcast("alice", "second");
 
-        room_.try_join("user_b", "bob", bob_, test_key(0xBB));
+        room_.join("user_b", "bob", bob_, test_key(0xBB));
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("user_b")));
 
         ASSERT_EQ(init.messages.size(), 2u);
@@ -174,11 +166,11 @@ namespace chat::server
 
     TEST_F(RoomTest, HistoryIsCappedAtOneHundredMessages)
     {
-        room_.try_join("user_a", "alice", alice_, test_key(0xAA));
+        room_.join("user_a", "alice", alice_, test_key(0xAA));
         for (int i = 0; i < 150; ++i)
             room_.record_and_broadcast("alice", "msg " + std::to_string(i));
 
-        room_.try_join("user_b", "bob", bob_, test_key(0xBB));
+        room_.join("user_b", "bob", bob_, test_key(0xBB));
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("user_b")));
 
         EXPECT_EQ(init.messages.size(), 100u);
@@ -193,5 +185,43 @@ namespace chat::server
         join_both();
         const auto init = Protocol::decode<InitMsg>(payload_of(room_.init_packet_for("nobody")));
         EXPECT_TRUE(init.messages.empty());
+    }
+
+    TEST(RoomPasswordTest, PublicRoomAcceptsAnything)
+    {
+        const Room room("lobby");
+
+        EXPECT_EQ(room.name(), "lobby");
+        EXPECT_FALSE(room.has_password());
+        EXPECT_TRUE(room.verify_password(""));
+        EXPECT_TRUE(room.verify_password("anything"));
+    }
+
+    TEST(RoomPasswordTest, LockedRoomAcceptsOnlyTheRightPassword)
+    {
+        const Room room("dev", "hunter2");
+
+        EXPECT_TRUE(room.has_password());
+        EXPECT_TRUE(room.verify_password("hunter2"));
+        EXPECT_FALSE(room.verify_password("hunter3"));
+        EXPECT_FALSE(room.verify_password(""));
+        EXPECT_FALSE(room.verify_password("hunter2 "));
+    }
+
+    TEST(RoomPasswordTest, EqualPasswordsInDifferentRoomsBothVerify)
+    {
+        // Distinct random salts per room: two rooms sharing a password must not
+        // share a hash, or one leaked hash would identify every room using it.
+        const Room a("one", "same-password");
+        const Room b("two", "same-password");
+
+        EXPECT_TRUE(a.verify_password("same-password"));
+        EXPECT_TRUE(b.verify_password("same-password"));
+    }
+
+    TEST(RoomPasswordTest, KeepsCreatorCasing)
+    {
+        const Room room("Dev-Team");
+        EXPECT_EQ(room.name(), "Dev-Team");
     }
 } // namespace chat::server

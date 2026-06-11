@@ -25,13 +25,22 @@ namespace chat::server
     public:
         static constexpr size_t kMaxHistory = 100;
 
-        // Atomic check-and-insert: refuses (returns false, room untouched) if the
-        // username is already present. Checking username_online() separately and
-        // then joining would leave a window for two logins of the same account.
-        bool try_join(const std::string& user_id,
-                      const std::string& username,
-                      std::shared_ptr<Sink> sink,
-                      std::vector<uint8_t> key);
+        // A password-less room is public. The password is hashed on construction
+        // and the plaintext is not retained.
+        explicit Room(std::string name = "", const std::string& password = "");
+
+        [[nodiscard]] const std::string& name() const { return name_; }
+        [[nodiscard]] bool has_password() const { return !password_hmac_.empty(); }
+
+        // True for any password when the room is public. Constant-time when locked.
+        [[nodiscard]] bool verify_password(const std::string& password) const;
+
+        // Adds a member. The caller (RoomManager) holds its own lock across the
+        // capacity check and this call, so there is no check-then-act window here.
+        void join(const std::string& user_id,
+                  const std::string& username,
+                  std::shared_ptr<Sink> sink,
+                  std::vector<uint8_t> key);
         void leave(const std::string& user_id);
 
         [[nodiscard]] bool username_online(const std::string& username) const;
@@ -68,5 +77,10 @@ namespace chat::server
         mutable std::mutex mutex_;
         std::unordered_map<std::string, Member> members_;
         std::deque<HistoryItem> history_;
+
+        // Immutable after construction, so read without the mutex.
+        std::string name_;
+        std::vector<uint8_t> salt_;
+        std::vector<uint8_t> password_hmac_;
     };
 } // namespace chat::server
