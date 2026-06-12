@@ -13,6 +13,7 @@
 
 #include "chat/auth/srp_client.hpp"
 #include "chat/common/types.hpp"
+#include "chat/common/messages.hpp"
 
 namespace chat::client
 {
@@ -53,6 +54,10 @@ namespace chat::client
 
         std::vector<Message> messages_;
         std::vector<User> users_;
+        std::string current_room_;
+        std::vector<RoomInfo> rooms_;
+        std::string room_filter_; // applied when the next ROOM_LIST arrives
+        std::mutex rooms_mutex_;
 
         std::mutex messages_mutex_;
         std::mutex users_mutex_;
@@ -74,5 +79,14 @@ namespace chat::client
 
         void render_ui();
         void print_banner();
+
+        // Returns false when the line was not a command and should be sent as chat.
+        bool handle_command(const std::string& line);
+        void print_rooms();
+        // Seals `password` under the session key with the room name as AAD.
+        // Returns "" for an empty password.
+        [[nodiscard]] std::string seal_room_password(const std::string& room,
+                                                     const std::string& password) const;
+        boost::asio::awaitable<void> send_packet(std::vector<uint8_t> packet);
     };
 } // namespace chat::client

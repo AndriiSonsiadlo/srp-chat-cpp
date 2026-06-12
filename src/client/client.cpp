@@ -1,5 +1,6 @@
 #include "chat/client/client.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -15,6 +16,7 @@
 #include "chat/common/log.hpp"
 #include "chat/common/messages.hpp"
 #include "chat/common/protocol.hpp"
+#include "chat/auth/srp_utils.hpp"
 
 namespace chat::client
 {
@@ -93,12 +95,195 @@ namespace chat::client
         stop();
     }
 
+    boost::asio::awaitable<void> Client::send_packet(std::vector<uint8_t> packet)
+    {
+        if (!connected_)
+            co_return;
+
+        try
+        {
+            co_await ProtocolHelpers::async_send_packet(socket_, packet);
+        }
+        catch (const std::exception& e)
+        {
+            log::error(std::string("failed to send: ") + e.what());
+            connected_ = false;
+        }
+    }
+
+    std::string Client::seal_room_password(const std::string& room, const std::string& password) const
+    {
+        if (password.empty())
+            return "";
+
+        const std::vector<uint8_t> aad(room.begin(), room.end());
+        return auth::SRPUtils::bytes_to_base64(
+            crypto::AESEngine::encrypt_string(password, room_key_, aad));
+    }
+
+    void Client::print_rooms()
+    {
+        std::vector<RoomInfo> shown;
+        std::string filter;
+        {
+            std::lock_guard<std::mutex> lock(rooms_mutex_);
+            filter = room_filter_;
+
+            // Case-insensitive substring match, entirely client-side.
+            const auto lower = [](std::string s) {
+                std::ranges::transform(s, s.begin(), [](const unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                return s;
+            };
+            const auto needle = lower(filter);
+
+            for (const auto& room : rooms_)
+                if (needle.empty() || lower(room.name).find(needle) != std::string::npos)
+                    shown.push_back(room);
+        }
+
+        std::lock_guard<std::mutex> lock(ui_mutex_);
+        terminal::clear_line();
+
+        std::cout << "\nRooms";
+        if (!filter.empty())
+            std::cout << " matching \"" << filter << "\"";
+        std::cout << ":\n";
+
+        if (shown.empty())
+            std::cout << "  (none)\n";
+
+        for (const auto& room : shown)
+            std::cout << "  " << (room.has_password ? "[locked] " : "         ")
+                << room.name << "  (" << room.user_count << " online)\n";
+
+        std::cout << std::endl;
+        std::cout << "[" << current_room_ << "] > " << std::flush;
+    }
+
+    bool Client::handle_command(const std::string& line)
+    {
+        if (line.empty() || line[0] != '/')
+            return false;
+
+        std::istringstream parts(line);
+        std::string command;
+        parts >> command;
+
+        if (command == "/clear")
+        {
+            {
+                std::lock_guard<std::mutex> lock(messages_mutex_);
+                messages_.clear();
+            }
+            render_ui();
+            return true;
+        }
+
+        if (command == "/help")
+        {
+            std::lock_guard<std::mutex> lock(ui_mutex_);
+            std::cout << "\nCommands:\n";
+            std::cout << "  /rooms [filter]         - List rooms, optionally filtered by name\n";
+            std::cout << "  /join <name>            - Join a room (prompts if it is locked)\n";
+            std::cout << "  /create <name>          - Create and join a public room\n";
+            std::cout << "  /create <name> --locked - Create a password-protected room\n";
+            std::cout << "  /leave                  - Return to the lobby\n";
+            std::cout << "  /clear                  - Clear message history\n";
+            std::cout << "  /quit, /q               - Quit the chat\n";
+            std::cout << "  /help                   - Show this help\n\n";
+            return true;
+        }
+
+        if (command == "/rooms")
+        {
+            std::string filter;
+            parts >> filter;
+            {
+                std::lock_guard<std::mutex> lock(rooms_mutex_);
+                room_filter_ = filter;
+            }
+            boost::asio::co_spawn(
+                io_context_,
+                [this] { return send_packet(Protocol::encode(MessageType::ROOM_LIST_REQ)); },
+                boost::asio::detached);
+            return true;
+        }
+
+        if (command == "/leave")
+        {
+            boost::asio::co_spawn(
+                io_context_,
+                [this] {
+                    return send_packet(Protocol::encode(
+                        MessageType::ROOM_JOIN, RoomJoinMsg{"lobby", ""}));
+                },
+                boost::asio::detached);
+            return true;
+        }
+
+        if (command == "/join" || command == "/create")
+        {
+            std::string name;
+            parts >> name;
+            if (name.empty())
+            {
+                std::lock_guard<std::mutex> lock(ui_mutex_);
+                std::cout << "Usage: " << command << " <name>" << std::endl;
+                return true;
+            }
+
+            std::string password;
+            if (command == "/create")
+            {
+                std::string flag;
+                parts >> flag;
+                // Prompted rather than taken inline: a password typed on the
+                // command line sits in the terminal scrollback.
+                if (flag == "--locked")
+                    password = terminal::read_password("Room password: ");
+            }
+            else
+            {
+                bool locked = false;
+                {
+                    std::lock_guard<std::mutex> lock(rooms_mutex_);
+                    for (const auto& room : rooms_)
+                        if (room.name == name && room.has_password)
+                            locked = true;
+                }
+                if (locked)
+                    password = terminal::read_password("Room password: ");
+            }
+
+            const auto sealed = seal_room_password(name, password);
+            terminal::wipe(password);
+
+            const auto packet = command == "/create"
+                ? Protocol::encode(MessageType::ROOM_CREATE, RoomCreateMsg{name, sealed})
+                : Protocol::encode(MessageType::ROOM_JOIN, RoomJoinMsg{name, sealed});
+
+            boost::asio::co_spawn(
+                io_context_,
+                [this, packet] { return send_packet(packet); },
+                boost::asio::detached);
+            return true;
+        }
+
+        return false; // unknown /command: send it as chat, as before
+    }
+
     void Client::input_loop()
     {
         std::string line;
         while (running_ && connected_)
         {
-            std::cout << "> ";
+            {
+                std::lock_guard<std::mutex> lock(ui_mutex_);
+                std::cout << "[" << current_room_ << "] > ";
+            }
+
             if (!std::getline(std::cin, line))
                 break;
 
@@ -108,29 +293,13 @@ namespace chat::client
             if (line == "/quit" || line == "/q")
                 break;
 
-            if (line == "/clear")
-            {
-                {
-                    std::lock_guard<std::mutex> lock(messages_mutex_);
-                    messages_.clear();
-                }
-                render_ui();
-            }
-            else if (line == "/help")
-            {
-                std::lock_guard<std::mutex> lock(ui_mutex_);
-                std::cout << "\nCommands:\n";
-                std::cout << "  /quit, /q  - Quit the chat\n";
-                std::cout << "  /clear     - Clear message history\n";
-                std::cout << "  /help      - Show this help\n\n";
-            }
-            else
-            {
-                boost::asio::co_spawn(
-                    io_context_,
-                    [this, line] { return send_message(line); },
-                    boost::asio::detached);
-            }
+            if (handle_command(line))
+                continue;
+
+            boost::asio::co_spawn(
+                io_context_,
+                [this, line] { return send_message(line); },
+                boost::asio::detached);
         }
     }
 
@@ -266,6 +435,12 @@ namespace chat::client
                     users_ = std::move(msg.users);
                 }
 
+                {
+                    std::lock_guard<std::mutex> lock(ui_mutex_);
+                    current_room_ = msg.room;
+                }
+                render_ui();
+
                 break;
             }
             case MessageType::BROADCAST: {
@@ -284,7 +459,7 @@ namespace chat::client
                     terminal::clear_line();
                     std::cout << terminal::color("\033[33m") << "*** " << msg.username << " joined the chat ***"
                         << terminal::color("\033[0m") << std::endl;
-                    std::cout << "> " << std::flush;
+                    std::cout << "[" << current_room_ << "] > " << std::flush;
                 }
 
                 break;
@@ -301,15 +476,27 @@ namespace chat::client
                     terminal::clear_line();
                     std::cout << terminal::color("\033[31m") << "*** " << msg.username << " left the chat ***"
                         << terminal::color("\033[0m") << std::endl;
-                    std::cout << "> " << std::flush;
+                    std::cout << "[" << current_room_ << "] > " << std::flush;
                 }
 
                 break;
             }
+            case MessageType::ROOM_LIST: {
+                auto msg = Protocol::decode<RoomListMsg>(payload);
+                {
+                    std::lock_guard<std::mutex> lock(rooms_mutex_);
+                    rooms_ = std::move(msg.rooms);
+                }
+                print_rooms();
+                break;
+            }
             case MessageType::ERROR_MSG: {
                 auto msg = Protocol::decode<ErrorMsg>(payload);
-                log::error("server error: " + msg.error_msg);
-                connected_ = false;
+                std::lock_guard<std::mutex> lock(ui_mutex_);
+                terminal::clear_line();
+                std::cout << terminal::color("\033[31m") << "*** " << msg.error_msg << " ***"
+                    << terminal::color("\033[0m") << std::endl;
+                std::cout << "[" << current_room_ << "] > " << std::flush;
                 break;
             }
             default: {
@@ -333,7 +520,7 @@ namespace chat::client
         {
             std::lock_guard<std::mutex> lock(ui_mutex_);
             std::cerr << "\nFailed to decrypt message from " << username << ": " << e.what() << std::endl;
-            std::cout << "> " << std::flush;
+            std::cout << "[" << current_room_ << "] > " << std::flush;
             return;
         }
 
@@ -359,7 +546,7 @@ namespace chat::client
             std::cout << "[" << format_time(timestamp, "%Y-%m-%dT%H:%M:%S", true) << "] "
                 << name_color << username << terminal::color("\033[0m") << ": " << text << std::endl;
 
-            std::cout << "> " << std::flush;
+            std::cout << "[" << current_room_ << "] > " << std::flush;
         }
     }
 
@@ -498,14 +685,19 @@ namespace chat::client
 
     void Client::render_ui()
     {
-        {
-            std::lock_guard<std::mutex> lock(ui_mutex_);
-            terminal::clear_screen();
-            print_banner();
-        }
+        // Task 8 made this reachable from the io thread (every room switch
+        // triggers an INIT -> render_ui()), not just the main thread as
+        // before. cout is not thread-safe, so the whole render must be one
+        // critical section under ui_mutex_ -- the container-specific mutexes
+        // below only protect the containers themselves, not the printing.
+        std::lock_guard<std::mutex> ui_lock(ui_mutex_);
+
+        terminal::clear_screen();
+        print_banner();
 
         {
             std::lock_guard<std::mutex> lock(users_mutex_);
+            std::cout << "Room: " << current_room_ << "\n";
             std::cout << "Online users: ";
             for (size_t i = 0; i < users_.size(); ++i)
             {
