@@ -147,7 +147,7 @@ Authentication:
   S -> C   SRP_CHALLENGE     { user_id, B_b64, salt_b64, room_salt_b64 }
   C -> S   SRP_RESPONSE      { user_id, M_b64 }
   S -> C   SRP_SUCCESS       { H_AMK_b64 }      -- and nothing else
-  S -> C   INIT              { messages, users }
+  S -> C   INIT              { room, messages, users }
 ```
 
 `SRP_SUCCESS` deliberately carries only `H_AMK_b64` — the server's proof that
@@ -206,12 +206,15 @@ both hex-encoded. Writes are atomic: the server writes to `users.db.tmp`,
 
 ## Testing
 
-Test suites (run with `ctest --preset debug`, 94 tests total):
+Test suites (run with `ctest --preset debug`, 129 tests total):
 
 - `AesTest`, `AESEngineTest` — AES-256-GCM encryption and HKDF key derivation
 - `CliTest` — command-line flag parsing
+- `OnlineUsersTest` — server-wide username claim/release tracking
 - `ProtocolTest` — message encode/decode
 - `RoomTest` — chat room membership and broadcast
+- `RoomManagerTest` — room creation, joining, capacity/name limits, lobby lifecycle
+- `RoomNameTest` — room name validation and case-insensitive key normalization
 - `SrpTest` — SRP-6a client/server key exchange
 - `TypesTest` — core message/user structs
 - `UserStoreTest` — credential storage, atomic save, malformed-input handling
@@ -253,12 +256,12 @@ include/chat/
   common/   wire format (buffer.hpp, protocol.hpp), message structs, CLI parsing, logging
   auth/     SRP-6a client/server state machines, user credential store, base64/hex utils
   crypto/   AES-256-GCM engine and HKDF-SHA256 key derivation
-  server/   connection session, room (broadcast/membership), server entry point
+  server/   connection session, room (broadcast/membership), room manager, online users tracking (online_users.hpp), server entry point
   client/   client state machine, terminal UI helpers
 src/
   common/   buffer.cpp, cli.cpp
   auth/     srp_client.cpp, srp_server.cpp, srp_utils.cpp, user_store.cpp
   crypto/   aes_engine.cpp
-  server/   server.cpp, session.cpp, room.cpp, main.cpp
+  server/   server.cpp, session.cpp, session_rooms.cpp, room.cpp, room_manager.cpp, main.cpp
   client/   client.cpp, terminal.cpp, main.cpp
 ```
