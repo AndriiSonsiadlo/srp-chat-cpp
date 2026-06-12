@@ -43,7 +43,6 @@ namespace chat::server
                   std::vector<uint8_t> key);
         void leave(const std::string& user_id);
 
-        [[nodiscard]] bool username_online(const std::string& username) const;
         [[nodiscard]] std::string username_of(const std::string& user_id) const;
         [[nodiscard]] std::vector<User> active_users() const;
         [[nodiscard]] size_t size() const;

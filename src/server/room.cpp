@@ -60,14 +60,6 @@ namespace chat::server
         members_.erase(user_id);
     }
 
-    bool Room::username_online(const std::string& username) const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return std::ranges::any_of(members_, [&username](const auto& entry) {
-            return entry.second.username == username;
-        });
-    }
-
     std::string Room::username_of(const std::string& user_id) const
     {
         std::lock_guard<std::mutex> lock(mutex_);

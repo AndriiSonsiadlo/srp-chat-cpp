@@ -64,8 +64,7 @@ namespace chat::server
         join_both();
 
         EXPECT_EQ(room_.size(), 2u);
-        EXPECT_TRUE(room_.username_online("alice"));
-        EXPECT_FALSE(room_.username_online("carol"));
+        EXPECT_EQ(room_.username_of("user_a"), "alice");
         EXPECT_EQ(room_.username_of("user_b"), "bob");
         EXPECT_EQ(room_.username_of("nobody"), "");
         EXPECT_EQ(room_.active_users().size(), 2u);
@@ -77,7 +76,7 @@ namespace chat::server
         room_.leave("user_a");
 
         EXPECT_EQ(room_.size(), 1u);
-        EXPECT_FALSE(room_.username_online("alice"));
+        EXPECT_EQ(room_.username_of("user_a"), "");
         // Leaving a room must not close the connection — a room switch is a leave
         // followed by a join, and Session::run owns the socket teardown.
         EXPECT_FALSE(alice_->closed);
