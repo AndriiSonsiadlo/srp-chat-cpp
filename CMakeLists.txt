@@ -73,6 +73,7 @@ add_executable(chat_server
         src/server/main.cpp
         src/server/server.cpp
         src/server/session.cpp
+        src/server/session_rooms.cpp
         src/server/room.cpp
         src/server/room_manager.cpp
 )

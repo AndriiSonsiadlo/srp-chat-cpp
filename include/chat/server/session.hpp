@@ -50,8 +50,16 @@ namespace chat::server
         // a malformed derived key, in which case the caller must not retry.
         boost::asio::awaitable<std::optional<std::string>> finish_login(
             const std::string& username, const std::string& user_id);
-        boost::asio::awaitable<void> message_loop(const std::string& user_id);
+        boost::asio::awaitable<void> message_loop();
         boost::asio::awaitable<bool> handle_register(const std::vector<uint8_t>& payload);
+
+        // Defined in session_rooms.cpp.
+        void handle_room_list();
+        // `create` selects create-and-join over join. Room failures send an
+        // ERROR_MSG and return; they do not end the session.
+        void handle_room_join(const std::vector<uint8_t>& payload, bool create);
+        // ERROR_MSG without fail()'s implication that the session is over.
+        void reject(const std::string& client_message, const std::string& log_message);
 
         void fail(const std::string& client_message, const std::string& log_message);
         void extend_deadline();

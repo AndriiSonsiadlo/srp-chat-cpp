@@ -167,7 +167,7 @@ namespace chat::server
         if (user_id.has_value()) {
             extend_deadline();
             try {
-                co_await message_loop(*user_id);
+                co_await message_loop();
             }
             catch (const std::exception& e) {
                 log::info(remote_ + ": connection ended: " + e.what());
@@ -379,7 +379,7 @@ namespace chat::server
         co_return user_id;
     }
 
-    awaitable<void> Session::message_loop(const std::string& user_id)
+    awaitable<void> Session::message_loop()
     {
         while (socket_.is_open()) {
             auto [type, payload] = co_await ProtocolHelpers::async_receive_packet(socket_);
@@ -418,6 +418,15 @@ namespace chat::server
                     room_->record_and_broadcast(username_, text);
                     break;
                 }
+                case MessageType::ROOM_LIST_REQ:
+                    handle_room_list();
+                    break;
+                case MessageType::ROOM_CREATE:
+                    handle_room_join(payload, true);
+                    break;
+                case MessageType::ROOM_JOIN:
+                    handle_room_join(payload, false);
+                    break;
                 case MessageType::DISCONNECT:
                     co_return;
                 default:
