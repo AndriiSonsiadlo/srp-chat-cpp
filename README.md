@@ -79,6 +79,31 @@ In a second terminal, register a second user and chat:
 Once logged in, type a line and press Enter to broadcast it to the room. Type
 `/help` inside the client for available commands.
 
+## Rooms
+
+Everyone starts in `lobby`. Rooms are created on demand and cease to exist when
+their last member leaves — nothing about them is written to disk.
+
+| Command | Effect |
+|---|---|
+| `/rooms [filter]` | List rooms. The filter is a case-insensitive substring match on the name. |
+| `/join <name>` | Join a room. Prompts for the password when the room is locked. |
+| `/create <name>` | Create and join a public room. |
+| `/create <name> --locked` | Create a password-protected room, prompting for the password. |
+| `/leave` | Return to `lobby`. |
+
+Room names are 1–32 characters of `A-Z a-z 0-9 _ -` and are unique
+case-insensitively: `Dev` and `dev` are the same room.
+
+A room password is sealed under your session key before it leaves the client and
+is stored server-side as a salted HMAC, never in the clear. The server does see
+it at the moment it verifies — as it already sees every message — so **do not
+reuse your account password as a room password.**
+
+Room names and occupancy counts are visible to every logged-in user, including
+for password-protected rooms. Discovery is the point of the list; the password
+is what gates entry.
+
 ## Flag reference
 
 ### `chat_server`
@@ -89,6 +114,8 @@ Usage: chat_server [options]
   --port <n>               Listen port (default 8888, range 1024-65535)
   --users-db <path>        Credential database (default users.db)
   --max-connections <n>    Concurrent connection cap (default 256)
+  --max-rooms <n>          Room cap, lobby included (default 64)
+  --max-room-members <n>   Members per room (default 64)
   --handshake-timeout <s>  Seconds to complete authentication (default 30)
   --idle-timeout <s>       Seconds of silence before disconnect (default 120)
   --help                   Show this message
@@ -206,6 +233,8 @@ ctest --preset debug -R SrpTest
 - No client reconnect: a dropped connection ends the session.
 - No per-IP registration rate limiting.
 - Not end-to-end encrypted — see Threat model above.
+- **Protocol version 2.** A version-1 client is rejected at the handshake with a
+  clear message rather than failing obscurely later.
 - `room_salt` (used to derive the AES room key via HKDF) is sent unauthenticated
   in the `SRP_CHALLENGE`; an active on-path attacker (already a conceded
   capability given no TLS) can tamper with it to desync the client's and
