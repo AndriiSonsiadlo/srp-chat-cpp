@@ -35,7 +35,9 @@ namespace chat::server
         if (!room->verify_password(password))
             return {JoinStatus::WrongPassword, nullptr};
 
-        if (room->size() >= max_members_)
+        // --max-room-members bounds rooms people create; the lobby is exempt so
+        // --max-connections alone governs how many users can be logged in.
+        if (room_key(name) != room_key(kDefaultRoom) && room->size() >= max_members_)
             return {JoinStatus::RoomFull, nullptr};
 
         room->join(user_id, username, std::move(sink), std::move(key));

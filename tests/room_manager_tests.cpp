@@ -128,6 +128,33 @@ namespace chat::server
                   JoinStatus::RoomFull);
     }
 
+    TEST(RoomManagerTest, LobbyIsExemptFromMemberCap)
+    {
+        RoomManager manager(64, 1);
+        ASSERT_EQ(manager.join(kDefaultRoom, "", "id-a", "alice", sink(), test_key(0xAA)).status,
+                  JoinStatus::Ok);
+
+        EXPECT_EQ(manager.join(kDefaultRoom, "", "id-b", "bob", sink(), test_key(0xBB)).status,
+                  JoinStatus::Ok);
+    }
+
+    TEST(RoomManagerTest, ConcurrentlyEmptiedRoomFailsCleanlyRatherThanStranding)
+    {
+        RoomManager manager(64, 64);
+        ASSERT_EQ(manager.create_and_join("dev", "", "id-a", "alice", sink(), test_key(0xAA)).status,
+                  JoinStatus::Ok);
+
+        // Simulate the room emptying and being reaped between a caller's lookup
+        // and their join — this must fail cleanly (NoSuchRoom), never strand the
+        // caller in a room that is no longer reachable from the map.
+        manager.find("dev")->leave("id-a");
+        manager.drop_if_empty("dev");
+
+        const auto result = manager.join("dev", "", "id-b", "bob", sink(), test_key(0xBB));
+        EXPECT_EQ(result.status, JoinStatus::NoSuchRoom);
+        EXPECT_EQ(result.room, nullptr);
+    }
+
     TEST(RoomManagerTest, EnforcesRoomCap)
     {
         // The lobby occupies one slot from the start.
