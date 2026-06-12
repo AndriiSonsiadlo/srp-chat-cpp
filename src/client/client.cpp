@@ -242,19 +242,33 @@ namespace chat::client
                 // Prompted rather than taken inline: a password typed on the
                 // command line sits in the terminal scrollback.
                 if (flag == "--locked")
+                {
+                    std::lock_guard<std::mutex> lock(ui_mutex_);
                     password = terminal::read_password("Room password: ");
+                }
             }
             else
             {
+                // Case-insensitive substring match, entirely client-side.
+                const auto lower = [](std::string s) {
+                    std::ranges::transform(s, s.begin(), [](const unsigned char c) {
+                        return static_cast<char>(std::tolower(c));
+                    });
+                    return s;
+                };
+
                 bool locked = false;
                 {
                     std::lock_guard<std::mutex> lock(rooms_mutex_);
                     for (const auto& room : rooms_)
-                        if (room.name == name && room.has_password)
+                        if (lower(room.name) == lower(name) && room.has_password)
                             locked = true;
                 }
                 if (locked)
+                {
+                    std::lock_guard<std::mutex> lock(ui_mutex_);
                     password = terminal::read_password("Room password: ");
+                }
             }
 
             const auto sealed = seal_room_password(name, password);
